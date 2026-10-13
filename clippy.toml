@@ -1,0 +1,4 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# Protocol names that are prose, not code.
+doc-valid-idents = ["HiSLIP", "USBTMC", "USB488", "IPv6", ".."]

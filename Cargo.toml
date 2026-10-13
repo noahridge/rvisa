@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["legacy", "fuzz"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+rvisa-core = { path = "crates/rvisa-core", version = "0.0.0" }
+rvisa-mock = { path = "crates/rvisa-mock", version = "0.0.0" }
+rvisa-conformance = { path = "crates/rvisa-conformance", version = "0.0.0" }
+thiserror = "2"
+regex-lite = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

@@ -1,0 +1,4 @@
+# MSRV: latest stable (1.99) minus two at Phase 0 start. See docs/DESIGN.md T1.
+[toolchain]
+channel = "1.97"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]

@@ -1,0 +1,23 @@
+[package]
+name = "rvisa-mock"
+description = "Scripted mock backend and record/replay sessions for rvisa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+keywords = ["visa", "instrument", "mock", "testing"]
+categories = ["hardware-support", "development-tools::testing"]
+
+[dependencies]
+rvisa-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rvisa-conformance.workspace = true
+
+[lints]
+workspace = true

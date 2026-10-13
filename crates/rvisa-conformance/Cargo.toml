@@ -1,0 +1,20 @@
+[package]
+name = "rvisa-conformance"
+description = "Backend-agnostic conformance suite for rvisa backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+keywords = ["visa", "instrument", "testing"]
+categories = ["hardware-support", "development-tools::testing"]
+
+[dependencies]
+rvisa-core.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rvisa-mock.workspace = true
