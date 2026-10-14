@@ -9,8 +9,10 @@ resource strings, sessions, read/write/query, attributes and events.
   runtime so binaries run without VISA installed. Also the core API, a
   scripted mock backend, record/replay traces, a backend conformance suite,
   and an async adapter for tokio.
-- **Next:** pure-Rust transports: raw socket, VXI-11, USBTMC, HiSLIP and
-  serial.
+- **In progress:** a pure-Rust raw socket backend
+  (`TCPIP::host::port::SOCKET`), with native async. It awaits hardware
+  validation.
+- **Next:** pure-Rust VXI-11, USBTMC, HiSLIP and serial.
 
 > Status: pre-release. Nothing is published yet. The crate names are
 > placeholders.
@@ -51,6 +53,7 @@ or that `RVISA_VENDOR_LIB` can point to the library.
 | [`rvisa`](crates/rvisa) | Facade: `ResourceManager`, backend registry and selection |
 | [`rvisa-core`](crates/rvisa-core) | `ResourceName`, `Session`/`Backend` traits, `Error`, attributes, IEEE 488.2 helpers |
 | [`rvisa-vendor`](crates/rvisa-vendor) | Vendor VISA backend, loaded at runtime |
+| [`rvisa-socket`](crates/rvisa-socket) | Pure-Rust raw TCP socket backend, blocking and async |
 | [`rvisa-mock`](crates/rvisa-mock) | Scripted mock backend, `RecordingSession`/`ReplaySession`, `TcpInstrument` |
 | [`rvisa-conformance`](crates/rvisa-conformance) | Backend-agnostic conformance suite |
 | `rvisa-vendor-fake` | Test-only fake VISA library over the mock (not published) |

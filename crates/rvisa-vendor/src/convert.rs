@@ -34,7 +34,7 @@ pub(crate) fn error(
     };
     match status {
         VI_ERROR_TMO if fail.op == "viLock" => Error::ResourceLocked,
-        VI_ERROR_TMO => Error::Timeout,
+        VI_ERROR_TMO => Error::timeout(),
         VI_ERROR_RSRC_LOCKED => Error::ResourceLocked,
         VI_ERROR_RSRC_NFOUND => match ctx.resource {
             Some(rn) => Error::NotFound(rn.clone()),
@@ -270,7 +270,10 @@ mod tests {
         };
         let none = |_| None;
         let map = |f| error(f, &ctx, none);
-        assert!(matches!(map(fail("viRead", VI_ERROR_TMO)), Error::Timeout));
+        assert!(matches!(
+            map(fail("viRead", VI_ERROR_TMO)),
+            Error::Timeout { .. }
+        ));
         assert!(matches!(
             map(fail("viLock", VI_ERROR_TMO)),
             Error::ResourceLocked

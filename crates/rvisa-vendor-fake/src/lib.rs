@@ -73,7 +73,7 @@ fn with_session(vi: ViSession, f: impl FnOnce(&mut dyn Session) -> ViStatus) -> 
 /// What an rvisa error looks like as a VISA status.
 fn status(e: &Error) -> ViStatus {
     match e {
-        Error::Timeout => VI_ERROR_TMO,
+        Error::Timeout { .. } => VI_ERROR_TMO,
         Error::NotFound(_) => VI_ERROR_RSRC_NFOUND,
         Error::ResourceLocked => VI_ERROR_RSRC_LOCKED,
         Error::Unsupported { .. } => VI_ERROR_NSUP_OPER,
@@ -448,22 +448,28 @@ pub unsafe extern "system" fn viRead(
     if buf.is_null() || count == 0 {
         return VI_ERROR_INV_PARAMETER;
     }
-    with_session(vi, |s| match s.read(count as usize) {
-        Ok(read) => {
-            let n = read.data.len().min(count as usize);
-            // SAFETY: the caller passes a buffer of `count` writable bytes,
-            // and `n <= count`.
-            unsafe {
-                std::ptr::copy_nonoverlapping(read.data.as_ptr(), buf, n);
-                set(ret, u32::try_from(n).unwrap_or(u32::MAX));
+    with_session(vi, |s| {
+        // Like NI-VISA, a timeout still reports the bytes that arrived.
+        let (data, code) = match s.read(count as usize) {
+            Ok(read) => {
+                let code = match read.reason {
+                    TermReason::TermChar => VI_SUCCESS_TERM_CHAR,
+                    TermReason::MaxCount => VI_SUCCESS_MAX_CNT,
+                    _ => VI_SUCCESS,
+                };
+                (read.data, code)
             }
-            match read.reason {
-                TermReason::TermChar => VI_SUCCESS_TERM_CHAR,
-                TermReason::MaxCount => VI_SUCCESS_MAX_CNT,
-                _ => VI_SUCCESS,
-            }
+            Err(Error::Timeout { partial, .. }) => (partial, VI_ERROR_TMO),
+            Err(e) => (Vec::new(), status(&e)),
+        };
+        let n = data.len().min(count as usize);
+        // SAFETY: the caller passes a buffer of `count` writable bytes,
+        // and `n <= count`.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n);
+            set(ret, u32::try_from(n).unwrap_or(u32::MAX));
         }
-        Err(e) => status(&e),
+        code
     })
 }
 

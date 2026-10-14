@@ -48,6 +48,14 @@ pub fn unescape(text: &str) -> Option<Vec<u8>> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bytes(pub Vec<u8>);
 
+impl Bytes {
+    /// Whether there are no bytes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 impl Serialize for Bytes {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&escape(&self.0))

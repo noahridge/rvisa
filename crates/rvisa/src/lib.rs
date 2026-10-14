@@ -28,17 +28,22 @@
 //! |---|---|---|---|
 //! | `mock` | `rvisa-mock` | feature `mock` | only its registered instruments |
 //! | `vendor` | `rvisa-vendor` | feature `vendor` (default) | every VISA resource; needs a VISA installed |
+//! | `socket` | `rvisa-socket` | feature `socket` (default) | `TCPIP::host::port::SOCKET`, in pure Rust |
 //!
-//! Pure-Rust transports arrive in later releases (see `docs/ROADMAP.md`).
-//! Without a VISA installed, the vendor backend reports
-//! [`Error::BackendUnavailable`] with instructions, and the program keeps
-//! running.
+//! Vendor VISA comes before the pure-Rust backends until they have passed
+//! conformance on hardware (ROADMAP §5); [`ResourceManagerBuilder::prefer`]
+//! changes the order. Without a VISA installed, the vendor backend reports
+//! [`Error::BackendUnavailable`] with instructions, and [`open`](ResourceManager::open)
+//! moves on to the next backend that supports the resource, so socket
+//! resources still open.
 //!
 //! # Features
 //!
 //! - `vendor` (default): the runtime-loaded vendor VISA backend.
+//! - `socket` (default): the pure-Rust raw socket backend.
 //! - `mock`: the scripted mock backend with demo instruments.
-//! - `tokio`: [`tokio::AsyncInstrument`], an async adapter.
+//! - `tokio`: [`tokio::AsyncInstrument`], an async adapter, and the socket
+//!   backend's native async session (`socket::tokio`).
 
 #![deny(missing_docs)]
 
@@ -49,6 +54,8 @@ use std::time::Duration;
 pub use rvisa_core::*;
 #[cfg(feature = "mock")]
 pub use rvisa_mock as mock;
+#[cfg(feature = "socket")]
+pub use rvisa_socket as socket;
 #[cfg(feature = "vendor")]
 pub use rvisa_vendor as vendor;
 
@@ -68,7 +75,8 @@ pub const DEFAULT_WRITE_TERMINATION: &[u8] = b"\n";
 /// The backends compiled in, in default priority order.
 ///
 /// The mock comes first: it supports only its own instruments, while the
-/// vendor backend supports every VISA resource (DESIGN.md V10).
+/// vendor backend supports every VISA resource (DESIGN.md V10). Pure-Rust
+/// backends follow vendor until Phase 6 (ROADMAP §5, DESIGN.md F3).
 fn default_backends(
     #[allow(unused)] vendor_library: Option<&std::path::Path>,
 ) -> Vec<Arc<dyn Backend>> {
@@ -80,6 +88,8 @@ fn default_backends(
             Some(path) => rvisa_vendor::VendorBackend::with_library_path(path),
             None => rvisa_vendor::VendorBackend::new(),
         }) as Arc<dyn Backend>),
+        #[cfg(feature = "socket")]
+        (Arc::new(rvisa_socket::SocketBackend::new()) as Arc<dyn Backend>),
     ]
 }
 
@@ -127,13 +137,16 @@ impl ResourceManager {
     }
 
     /// Opens `resource` with the first backend, in priority order, that
-    /// supports it.
+    /// supports it. A backend that is unavailable (no VISA installed) is
+    /// skipped in favour of the next one that supports the resource
+    /// (DESIGN.md F3); any other error is returned at once.
     ///
     /// # Errors
     ///
     /// [`Error::InvalidResource`] if the name does not parse,
-    /// [`Error::NoBackend`] if no backend supports it, and errors from the
-    /// backend.
+    /// [`Error::NoBackend`] if no backend supports it,
+    /// [`Error::BackendUnavailable`] if every backend that supports it is
+    /// unavailable, and errors from the backend.
     pub fn open(&self, resource: &str) -> Result<Instrument> {
         self.open_with_options(resource, None, &OpenOptions::new())
     }
@@ -165,20 +178,26 @@ impl ResourceManager {
             Ok(rn) => rn,
             Err(parse_error) => self.resolve_alias(resource)?.ok_or(parse_error)?,
         };
-        let chosen = match backend {
-            Some(name) => self.find(name)?,
-            None => self
-                .backends
-                .iter()
-                .find(|b| b.supports(&rn))
-                .ok_or_else(|| Error::NoBackend(rn.clone()))?,
-        };
-        let session = chosen.open(&rn, options)?;
-        Ok(Instrument {
+        let instrument = |backend: &Arc<dyn Backend>, session| Instrument {
             inner: session,
-            backend: chosen.name(),
+            backend: backend.name(),
             write_termination: Some(DEFAULT_WRITE_TERMINATION.to_vec()),
-        })
+        };
+        if let Some(name) = backend {
+            let chosen = self.find(name)?;
+            return Ok(instrument(chosen, chosen.open(&rn, options)?));
+        }
+        let mut unavailable = None;
+        for candidate in self.backends.iter().filter(|b| b.supports(&rn)) {
+            match candidate.open(&rn, options) {
+                Ok(session) => return Ok(instrument(candidate, session)),
+                Err(e @ Error::BackendUnavailable { .. }) => {
+                    unavailable.get_or_insert(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(unavailable.unwrap_or(Error::NoBackend(rn)))
     }
 
     /// Lists resources matching a VISA search expression (such as `"?*"`

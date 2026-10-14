@@ -21,6 +21,7 @@ mod attr;
 mod error;
 mod event;
 pub mod ieee488;
+mod locks;
 mod pattern;
 mod resource;
 mod session;
@@ -28,6 +29,7 @@ mod session;
 pub use attr::{Attr, AttrKind, AttrValue, FlowControl, InterfaceType, Parity, StopBits};
 pub use error::{Error, Result};
 pub use event::{Event, EventKind};
+pub use locks::LockTable;
 pub use pattern::Pattern;
 pub use resource::ResourceName;
 pub use session::{

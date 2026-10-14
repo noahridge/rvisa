@@ -119,6 +119,32 @@ fn vendor_conformance() {
 
 #[test]
 #[ignore = "needs a VISA installed"]
+fn vendor_timeout_keeps_partial_data() {
+    use std::io::Write;
+    use std::time::Duration;
+
+    // DESIGN.md C12: VISA reports the bytes that arrived before a timeout.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let rn: ResourceName = format!("TCPIP0::127.0.0.1::{port}::SOCKET")
+        .parse()
+        .unwrap();
+    let visa = VendorBackend::new();
+    let mut s = visa.open(&rn, &OpenOptions::new()).unwrap();
+    let (mut peer, _) = listener.accept().unwrap();
+    s.set_timeout(Some(Duration::from_millis(300))).unwrap();
+    s.set_read_termination(Some(b'\n')).unwrap();
+    peer.write_all(b"PARTIAL").unwrap();
+    match s.read(100) {
+        Err(rvisa_core::Error::Timeout { partial, .. }) => assert_eq!(partial, b"PARTIAL"),
+        other => panic!("expected a timeout with data, got {other:?}"),
+    }
+    peer.write_all(b"\n").unwrap();
+    assert_eq!(s.read(100).unwrap().data, b"\n", "the bytes were consumed");
+}
+
+#[test]
+#[ignore = "needs a VISA installed"]
 fn vendor_against_tcp_simulator() {
     let server = TcpInstrument::spawn(demo_script("SIM100", "SIM001")).unwrap();
     let visa = VendorBackend::new();

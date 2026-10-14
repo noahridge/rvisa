@@ -305,7 +305,11 @@ pub fn timeout_is_respected(s: &mut dyn Session, p: &Profile) -> Outcome {
         let result = s.read(64);
         let elapsed = start.elapsed();
         match result {
-            Err(Error::Timeout) => {}
+            Err(Error::Timeout { partial, .. }) => ensure!(
+                partial.is_empty(),
+                "timeout carried {:?} with nothing pending",
+                show(&partial)
+            ),
             Err(e) => return Err(e.into()),
             Ok(r) => {
                 return Err(Stop::Failed(format!(

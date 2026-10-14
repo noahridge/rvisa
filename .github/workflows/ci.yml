@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal --component miri
-      - run: cargo +nightly miri test -p rvisa-core -p rvisa-vendor -p rvisa-mock --lib
+      - run: cargo +nightly miri test -p rvisa-core -p rvisa-vendor -p rvisa-mock -p rvisa-socket --lib
 
   stable:
     name: test (ubuntu, stable)

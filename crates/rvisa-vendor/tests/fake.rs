@@ -76,7 +76,7 @@ fn error_mapping() {
 
     let mut s = visa.open(&rn(DEMO[3]), &OpenOptions::new()).unwrap();
     s.set_timeout(Some(Duration::from_millis(20))).unwrap();
-    assert!(matches!(s.read(16), Err(Error::Timeout)));
+    assert!(matches!(s.read(16), Err(Error::Timeout { .. })));
     assert!(matches!(s.read(0), Err(Error::InvalidArgument(_))));
     assert!(matches!(
         s.set_attr(Attr::ModelName, AttrValue::Str("x".into())),

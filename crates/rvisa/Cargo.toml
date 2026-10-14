@@ -11,18 +11,21 @@ keywords = ["visa", "instrument", "scpi", "test-measurement"]
 categories = ["hardware-support"]
 
 [features]
-default = ["vendor"]
+default = ["vendor", "socket"]
 ## Registers the vendor VISA backend (NI, Keysight, R&S), loaded at runtime.
 vendor = ["dep:rvisa-vendor"]
+## Registers the pure-Rust raw socket backend (TCPIP::host::port::SOCKET).
+socket = ["dep:rvisa-socket"]
 ## Registers the scripted mock backend, preloaded with demonstration instruments.
 mock = ["dep:rvisa-mock"]
 ## An async adapter that runs blocking sessions on tokio's blocking pool.
-tokio = ["dep:tokio"]
+tokio = ["dep:tokio", "rvisa-socket?/tokio"]
 
 [dependencies]
 rvisa-core.workspace = true
 rvisa-mock = { workspace = true, optional = true }
 rvisa-vendor = { workspace = true, optional = true }
+rvisa-socket = { workspace = true, optional = true }
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 
 [dev-dependencies]

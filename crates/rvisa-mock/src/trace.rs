@@ -450,7 +450,12 @@ impl ValueRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ErrorRecord {
-    Timeout,
+    /// `partial` holds bytes a read received before timing out; it is
+    /// omitted when empty, so older traces still load.
+    Timeout {
+        #[serde(default, skip_serializing_if = "Bytes::is_empty")]
+        partial: Bytes,
+    },
     NotFound {
         resource: String,
     },
@@ -501,7 +506,9 @@ pub enum ErrorRecord {
 impl From<&Error> for ErrorRecord {
     fn from(e: &Error) -> Self {
         match e {
-            Error::Timeout => Self::Timeout,
+            Error::Timeout { partial, .. } => Self::Timeout {
+                partial: Bytes(partial.clone()),
+            },
             Error::NotFound(rn) => Self::NotFound {
                 resource: rn.to_string(),
             },
@@ -578,7 +585,7 @@ impl ErrorRecord {
             detail,
         };
         match self.clone() {
-            Self::Timeout => Error::Timeout,
+            Self::Timeout { partial } => Error::read_timeout(partial.0),
             Self::NotFound { resource } => match parse(&resource) {
                 Ok(rn) => Error::NotFound(rn),
                 Err(_) => protocol(format!("not found: {resource}")),
@@ -688,23 +695,30 @@ impl Trace {
     /// The instrument's response messages, in order: the data of successful
     /// reads, joined until a read ends with END. Stops at the term char do
     /// not split a message, since they depend on session settings rather
-    /// than on what the device sent. This is what the golden trace
-    /// comparison (ROADMAP §7.3) checks; timing is ignored. On transports
-    /// without END (raw sockets) everything forms one stream.
+    /// than on what the device sent. Bytes a read received before timing
+    /// out count too, since the device sent them. This is what the golden
+    /// trace comparison (ROADMAP §7.3) checks; timing is ignored. On
+    /// transports without END (raw sockets) everything forms one stream.
     #[must_use]
     pub fn responses(&self) -> Vec<Vec<u8>> {
         let mut messages = Vec::new();
         let mut current = Vec::new();
         for entry in &self.entries {
-            if let Call::Read {
-                result: Res::Ok(read),
-                ..
-            } = &entry.call
-            {
-                current.extend_from_slice(&read.data.0);
-                if read.reason == ReasonRecord::End {
-                    messages.push(std::mem::take(&mut current));
+            match &entry.call {
+                Call::Read {
+                    result: Res::Ok(read),
+                    ..
+                } => {
+                    current.extend_from_slice(&read.data.0);
+                    if read.reason == ReasonRecord::End {
+                        messages.push(std::mem::take(&mut current));
+                    }
                 }
+                Call::Read {
+                    result: Res::Err(ErrorRecord::Timeout { partial }),
+                    ..
+                } => current.extend_from_slice(&partial.0),
+                _ => {}
             }
         }
         if !current.is_empty() {
@@ -745,7 +759,8 @@ mod tests {
     fn every_error_round_trips() {
         let rn: ResourceName = "GPIB0::1".parse().unwrap();
         let errors = [
-            Error::Timeout,
+            Error::timeout(),
+            Error::read_timeout(b"part\n".to_vec()),
             Error::NotFound(rn.clone()),
             Error::Protocol {
                 backend: "x",
@@ -784,6 +799,15 @@ mod tests {
                 "{error:?}"
             );
         }
+        // Partial data survives; an empty one is left out of the line, so
+        // traces from before it existed still load.
+        let partial = ErrorRecord::from(&Error::read_timeout(b"ab".to_vec()));
+        assert!(matches!(
+            partial.to_error(),
+            Error::Timeout { partial, .. } if partial == b"ab"
+        ));
+        let empty = serde_json::to_string(&ErrorRecord::from(&Error::timeout())).unwrap();
+        assert_eq!(empty, r#"{"kind":"timeout"}"#);
         let io = ErrorRecord::from(&Error::Io(std::io::Error::other("boom")));
         assert!(matches!(io.to_error(), Error::Io(_)));
         let op = ErrorRecord::Unsupported {

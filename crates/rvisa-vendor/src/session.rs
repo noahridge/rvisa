@@ -154,12 +154,10 @@ impl Session for VendorSession {
             return Err(Error::InvalidArgument("read of zero bytes".into()));
         }
         let mut buf = vec![0; max];
-        let (n, status) = self
-            .rm
-            .lib
-            .read(self.vi, &mut buf)
-            .map_err(|f| self.plain(f))?;
+        let (n, status) = self.rm.lib.read(self.vi, &mut buf);
         buf.truncate(n);
+        // On a timeout, VISA hands over what arrived first (DESIGN.md C12).
+        let status = status.map_err(|f| self.plain(f).prepend_partial(std::mem::take(&mut buf)))?;
         let reason = convert::term_reason(status);
         tracing::trace!(resource = %self.resource, len = n, ?reason, data = ?String::from_utf8_lossy(&buf), "vendor: read");
         Ok(ReadResult { data: buf, reason })

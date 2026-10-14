@@ -214,6 +214,9 @@ fn default_backends_follow_features() {
     if cfg!(feature = "vendor") {
         expected.push("vendor");
     }
+    if cfg!(feature = "socket") {
+        expected.push("socket");
+    }
     assert_eq!(rm.backend_names(), expected);
     if expected.is_empty() {
         assert!(matches!(rm.open("GPIB0::1"), Err(Error::NoBackend(_))));

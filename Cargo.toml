@@ -15,6 +15,7 @@ rvisa-core = { path = "crates/rvisa-core", version = "0.0.0" }
 rvisa-mock = { path = "crates/rvisa-mock", version = "0.0.0" }
 rvisa-conformance = { path = "crates/rvisa-conformance", version = "0.0.0" }
 rvisa-vendor = { path = "crates/rvisa-vendor", version = "0.0.0" }
+rvisa-socket = { path = "crates/rvisa-socket", version = "0.0.0" }
 thiserror = "2"
 regex-lite = "0.1"
 serde = { version = "1", features = ["derive"] }

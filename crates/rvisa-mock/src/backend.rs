@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use rvisa_core::{
     Attr, AttrValue, Backend, Error, Event, EventKind, FlowControl, InterfaceType, LockKind,
-    OpenOptions, Parity, Pattern, ReadResult, ResourceName, Result, Session, StopBits, TermReason,
+    LockTable, OpenOptions, Parity, Pattern, ReadResult, ResourceName, Result, Session, StopBits,
+    TermReason,
 };
 
 use crate::bytes::escape;
@@ -34,94 +35,6 @@ struct SessionEvents {
     queue: VecDeque<EventKind>,
 }
 
-#[derive(Debug, Default)]
-struct Locks {
-    /// The session holding an exclusive lock, and its nesting depth.
-    exclusive: Option<(u64, u32)>,
-    /// The shared lock's key and each holder's nesting depth.
-    shared: Option<(String, HashMap<u64, u32>)>,
-}
-
-impl Locks {
-    /// Whether `session` is locked out of I/O.
-    fn blocks(&self, session: u64) -> bool {
-        let exclusive = self.exclusive.is_some_and(|(owner, _)| owner != session);
-        let shared = self
-            .shared
-            .as_ref()
-            .is_some_and(|(_, holders)| !holders.contains_key(&session));
-        exclusive || shared
-    }
-
-    fn try_lock(&mut self, session: u64, kind: &LockKind) -> bool {
-        match kind {
-            LockKind::Exclusive => match &mut self.exclusive {
-                Some((owner, depth)) if *owner == session => {
-                    *depth += 1;
-                    true
-                }
-                Some(_) => false,
-                None => {
-                    let others_share = self
-                        .shared
-                        .as_ref()
-                        .is_some_and(|(_, h)| h.keys().any(|&s| s != session));
-                    if others_share {
-                        return false;
-                    }
-                    self.exclusive = Some((session, 1));
-                    true
-                }
-            },
-            LockKind::Shared { key } => {
-                if self.exclusive.is_some_and(|(owner, _)| owner != session) {
-                    return false;
-                }
-                match &mut self.shared {
-                    Some((held, holders)) if held == key => {
-                        *holders.entry(session).or_insert(0) += 1;
-                        true
-                    }
-                    Some(_) => false,
-                    None => {
-                        self.shared = Some((key.clone(), HashMap::from([(session, 1)])));
-                        true
-                    }
-                }
-            }
-        }
-    }
-
-    fn unlock(&mut self, session: u64) -> bool {
-        if let Some((owner, depth)) = &mut self.exclusive
-            && *owner == session
-        {
-            *depth -= 1;
-            if *depth == 0 {
-                self.exclusive = None;
-            }
-            return true;
-        }
-        if let Some((_, holders)) = &mut self.shared
-            && let Some(depth) = holders.get_mut(&session)
-        {
-            *depth -= 1;
-            if *depth == 0 {
-                holders.remove(&session);
-            }
-            if holders.is_empty() {
-                self.shared = None;
-            }
-            return true;
-        }
-        false
-    }
-
-    fn release_all(&mut self, session: u64) {
-        while self.unlock(session) {}
-    }
-}
-
 /// The state of one simulated instrument, shared by its sessions.
 #[derive(Debug)]
 struct State {
@@ -132,7 +45,7 @@ struct State {
     stb: u8,
     triggers: u32,
     clears: u32,
-    locks: Locks,
+    locks: LockTable,
     sessions: HashMap<u64, SessionEvents>,
 }
 
@@ -146,7 +59,7 @@ impl State {
             stb: 0,
             triggers: 0,
             clears: 0,
-            locks: Locks::default(),
+            locks: LockTable::new(),
             sessions: HashMap::new(),
         }
     }
@@ -516,7 +429,7 @@ impl Session for MockSession {
                             sleep_until(Some(d));
                             continue;
                         }
-                        _ => return Err(Error::Timeout),
+                        _ => return Err(Error::timeout()),
                     }
                 }
             };
@@ -667,7 +580,7 @@ impl Session for MockSession {
                 }
             }
             if Instant::now() >= deadline {
-                return Err(Error::Timeout);
+                return Err(Error::timeout());
             }
             sleep_until(Some(deadline));
         }
@@ -741,7 +654,7 @@ mod tests {
         s.set_timeout(Some(Duration::from_millis(50))).unwrap();
         s.write(b"SLOW?\n").unwrap();
         let start = Instant::now();
-        assert!(matches!(s.read(64), Err(Error::Timeout)));
+        assert!(matches!(s.read(64), Err(Error::Timeout { .. })));
         assert!(start.elapsed() >= Duration::from_millis(50));
 
         s.set_timeout(Some(Duration::from_secs(2))).unwrap();
@@ -749,10 +662,13 @@ mod tests {
 
         s.write(b"HANG?\n").unwrap();
         s.set_timeout(Some(Duration::from_millis(20))).unwrap();
-        assert!(matches!(s.read(64), Err(Error::Timeout)));
+        assert!(matches!(s.read(64), Err(Error::Timeout { .. })));
 
         s.set_timeout(None).unwrap();
-        assert!(matches!(s.read(64), Err(Error::Timeout)), "never hangs");
+        assert!(
+            matches!(s.read(64), Err(Error::Timeout { .. })),
+            "never hangs"
+        );
         assert!(matches!(s.read(0), Err(Error::InvalidArgument(_))));
     }
 
@@ -901,7 +817,7 @@ mod tests {
         s.enable_event(EventKind::ServiceRequest).unwrap();
         assert!(matches!(
             s.wait_event(EventKind::ServiceRequest, short),
-            Err(Error::Timeout)
+            Err(Error::Timeout { .. })
         ));
         handle.raise_srq(0x01);
         assert_eq!(handle.stb(), 0x41);
@@ -918,7 +834,7 @@ mod tests {
         assert!(
             matches!(
                 s.wait_event(EventKind::ServiceRequest, short),
-                Err(Error::Timeout)
+                Err(Error::Timeout { .. })
             ),
             "disabling discards queued events"
         );

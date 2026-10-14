@@ -131,6 +131,35 @@ without one (raw sockets).
 `RecordingSession<S>` can then wrap the `Box<dyn Session>` that
 `Backend::open` returns.
 
+### C12. A read timeout carries the bytes received before it (Phase 2)
+
+Resolves V8's open question. NI-VISA 26.5 was observed on a SOCKET
+resource (2026-10-13): a `viRead` that times out returns `VI_ERROR_TMO`
+*and* the bytes that arrived, and those bytes are consumed, so the next
+read starts after them. Discarding them loses data, so `Error::Timeout`
+became `Timeout { partial: Vec<u8> }`. It stays an error, so a partial
+message is never mistaken for a whole one.
+
+- The variant is `#[non_exhaustive]`; build it with `Error::timeout()` or
+  `Error::read_timeout(partial)`, and match it with `Error::Timeout { .. }`.
+- `SessionExt::read_message` and `read_ieee488_block` put everything they
+  had already read in front of the partial data
+  (`Error::prepend_partial`), so a helper's timeout loses nothing either.
+- Traces record it as `{"kind":"timeout","partial":"..."}`, leaving the
+  field out when empty, so older traces load unchanged.
+  `Trace::responses()` counts partial bytes as response data.
+- The vendor backend passes `viRead`'s count through on errors; the fake
+  library reports partial bytes the same way.
+
+### C13. `LockTable` in core
+
+Backends that cannot lock through their protocol (raw sockets, later USBTMC
+and serial) keep VISA lock semantics in process: exclusive and shared
+locks, nesting, and other sessions' I/O failing with `ResourceLocked`. The
+mock's lock bookkeeping moved to `rvisa_core::LockTable` so they share one
+tested implementation. These locks are not visible to other processes
+(NI-VISA's are, through its resource manager service).
+
 ## Mock, record and replay (`rvisa-mock`)
 
 ### M1. Scripted instruments
@@ -365,6 +394,8 @@ returns `Error::Timeout`, and those bytes are lost, matching the trait as
 specified in §5. Open question for review: should `Error::Timeout` carry
 the partial data?
 
+**Superseded by C12 (Phase 2):** the bytes are now returned in the error.
+
 ### V9. Alias resolution through backends
 
 `Backend` gains a provided method `resolve_alias(&self, &str) ->
@@ -430,6 +461,109 @@ installed, `TCPIP0::127.0.0.1::<port>::SOCKET` then exercises the vendor
 backend end to end without an instrument. It is also the Phase 2 socket
 backend's first test peer.
 
+## Raw socket backend (`rvisa-socket`), Phase 2
+
+The reference is NI-VISA 26.5's behaviour on `TCPIP::host::port::SOCKET`,
+observed on Windows on 2026-10-13 with a local server that logged every
+byte (probe results in `docs/HARDWARE.md`).
+
+### S1. Scope and defaults
+
+Backend name `socket`. `supports()` is true for `TcpipSocket` only.
+`list()` returns nothing: raw sockets cannot be discovered (mDNS
+`_scpi-raw._tcp` is Phase 6). Defaults match NI-VISA: 2 s I/O timeout,
+term char `\n` but disabled, `TCP_NODELAY` on, keepalive on. `open`
+connects to each resolved address in turn, with a connect timeout
+(`SocketBackend::connect_timeout`, 5 s by default).
+
+### S2. Reads
+
+Bytes are buffered in the session. A read returns, in order of priority:
+up to and including the first term char within `max` bytes, if enabled
+(`TermChar`); otherwise `max` bytes (`MaxCount`). There is no END, so
+nothing else ends a read: without a term char, a read that gets fewer
+than `max` bytes ends in `Timeout` with the bytes as partial data (C12),
+exactly as NI-VISA does. The framing is a pure function
+(`ReadBuffer::take`), shared by the blocking and async sessions.
+
+A peer that closes the connection gives `Error::Io` (`UnexpectedEof`), the
+equivalent of `VI_ERROR_CONN_LOST`.
+
+### S3. Writes
+
+Bytes are sent exactly as given (D9; NI-VISA appends nothing either, even
+with `SEND_END_EN` or the term char enabled). `SendEndEnabled` is accepted
+and stored but has no effect, as in NI-VISA.
+
+### S4. Device clear
+
+ROADMAP Phase 2 task 2: drain the input buffer, then optionally send a
+clear string. Matching NI-VISA, the drain discards only what has already
+arrived (the session buffer, and the socket's receive buffer, read without
+blocking); a response still in flight arrives later. Nothing is sent by
+default; `SocketBackend::clear_command` sets a string to send (some
+instruments accept `*CLS` or a vendor-specific abort).
+
+### S5. Status byte and trigger: 488.2 string emulation
+
+With the default protocol, `read_stb` and `assert_trigger` return
+`Unsupported`, as NI-VISA does (it fails with `VI_ERROR_INV_SETUP`, V13).
+NI-VISA's `VI_ATTR_IO_PROT = VI_PROT_4882_STRS` sends `*STB?\n` (and
+parses the reply) and `*TRG\n` instead. The socket backend offers the same:
+`SocketBackend::emulate_488_strings(true)` for every session, or
+`Attr::Raw(VI_ATTR_IO_PROT)` set to `4` (and back to `1`) per session, the
+way vendor-backend users already do it.
+
+One deliberate difference: NI-VISA reads the `*STB?` reply with the
+session's term-char setting, so with the term char disabled (the default)
+it always times out. The socket backend reads the reply up to `\n`
+regardless, since that is the only useful behaviour. The reply is a
+decimal number 0–255; anything else is `InvalidData`.
+
+### S6. Locks and events
+
+Locks use `LockTable` (C13), per resource and process. A session locked
+out by another gets `ResourceLocked` from I/O. Events return
+`Unsupported`: a raw socket has no SRQ (NI-VISA: `VI_ERROR_INV_EVENT`,
+also `Unsupported` per V13).
+
+### S7. Native async (`tokio` feature)
+
+`rvisa_socket::tokio::AsyncSocketSession` uses `tokio::net::TcpStream`
+and `tokio::time::timeout`, with the same `ReadBuffer` framing, options
+and errors as the blocking session. It is a concrete type, not a trait:
+an async `Session` trait is deferred until a second native async backend
+(VXI-11) shows what it needs. A dropped read future loses no data: bytes
+are only taken from the socket into the session buffer, and framed when a
+read completes.
+
+The async session is used directly, not through the facade's
+`Instrument`, so it carries the facade's write termination itself (`\n`
+by default) for `query` and `write_str`. `write` still sends bytes
+unchanged. This is D9's facade-level termination living in the one place
+this API has, not a backend appending it.
+
+### S8. Golden-trace and throughput checks
+
+`crates/rvisa-socket/tests/hardware.rs` holds the Phase 2 exit tests:
+conformance against an instrument, response-for-response comparison with
+the vendor golden traces (`Trace::responses()` per test), and a 1 MiB
+throughput comparison with the vendor backend. They are `#[ignore]` and
+env-gated. The same comparisons run against the mock `TcpInstrument`
+when a VISA is installed, which is how they were developed.
+
+## Facade additions (Phase 2)
+
+### F3. Backends that are unavailable are skipped when opening
+
+`socket` is registered after `vendor` (ROADMAP §5: pure-Rust backends go
+first only from Phase 6). Without a VISA installed, the vendor backend
+still `supports()` every resource (V3), so a socket resource would fail
+with `BackendUnavailable` although `socket` could open it. `open` now
+tries the next supporting backend when one returns `BackendUnavailable`,
+and returns that first error only if no backend opens the resource. Any
+other error still stops the search (F1). `open_with` never falls back.
+
 ## Dependencies
 
 Every dependency passes `cargo-deny` (see `deny.toml`).
@@ -444,3 +578,5 @@ Every dependency passes `cargo-deny` (see `deny.toml`).
 | `libloading` | vendor | Runtime loading of the vendor library (D1). Its licence is ISC (permissive, MIT-equivalent), added to `deny.toml`. |
 | `windows-registry` | vendor (Windows only) | Registry lookup of the VISA framework directory (D2, V4). Maintained by Microsoft as part of windows-rs; no `unsafe` needed on our side. |
 | `tokio` (optional, `rt`) | facade, feature `tokio` | `spawn_blocking` async adapter (D8, V11). |
+| `socket2` | socket | TCP keepalive (`SO_KEEPALIVE`), which `std::net` cannot set. Maintained by the rust-lang organisation; MIT OR Apache-2.0. |
+| `tokio` (optional, `net`, `time`, `io-util`) | socket, feature `tokio` | Native async socket session (S7). |

@@ -32,7 +32,7 @@ async fn queries_run_on_the_blocking_pool() {
     psu.set_timeout(Some(Duration::from_millis(50)))
         .await
         .unwrap();
-    assert!(matches!(psu.read(64).await, Err(Error::Timeout)));
+    assert!(matches!(psu.read(64).await, Err(Error::Timeout { .. })));
     psu.set_read_termination(Some(b'\n')).await.unwrap();
     psu.clear().await.unwrap();
     psu.assert_trigger().await.unwrap();

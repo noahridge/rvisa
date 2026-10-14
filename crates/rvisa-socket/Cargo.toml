@@ -1,0 +1,33 @@
+[package]
+name = "rvisa-socket"
+description = "Pure-Rust raw TCP socket backend for rvisa (TCPIP::host::port::SOCKET)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+keywords = ["visa", "instrument", "scpi", "socket", "test-measurement"]
+categories = ["hardware-support", "network-programming"]
+
+[features]
+## A native async session on tokio (DESIGN.md S7).
+tokio = ["dep:tokio"]
+
+[dependencies]
+rvisa-core.workspace = true
+socket2 = "0.6"
+tracing.workspace = true
+tokio = { version = "1", default-features = false, features = ["net", "time", "io-util"], optional = true }
+
+[dev-dependencies]
+rvisa-conformance.workspace = true
+rvisa-mock.workspace = true
+rvisa-vendor.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

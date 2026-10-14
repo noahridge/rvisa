@@ -106,7 +106,8 @@ pub trait Session: Send {
     ///
     /// # Errors
     ///
-    /// [`Error::Timeout`] if no data arrives in time, or transport errors.
+    /// [`Error::Timeout`] if the read does not end in time, carrying any
+    /// bytes received before it; or transport errors.
     fn read(&mut self, max: usize) -> Result<ReadResult>;
 
     /// Sets the I/O timeout; `None` is infinite.
@@ -320,11 +321,14 @@ pub trait SessionExt: Session {
     ///
     /// # Errors
     ///
-    /// Errors from [`Session::read`].
+    /// Errors from [`Session::read`]. A timeout carries everything read
+    /// from the message so far.
     fn read_message(&mut self) -> Result<Vec<u8>> {
         let mut message = Vec::new();
         loop {
-            let chunk = self.read(READ_CHUNK)?;
+            let chunk = self
+                .read(READ_CHUNK)
+                .map_err(|e| e.prepend_partial(std::mem::take(&mut message)))?;
             message.extend_from_slice(&chunk.data);
             if chunk.reason.is_message_end() {
                 return Ok(message);
@@ -366,7 +370,8 @@ pub trait SessionExt: Session {
     /// # Errors
     ///
     /// [`Error::InvalidData`] for a malformed block or one cut short, and
-    /// errors from reading.
+    /// errors from reading. A timeout carries everything read so far,
+    /// header included.
     fn read_ieee488_block(&mut self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         let mut last = TermReason::MaxCount;
@@ -380,7 +385,9 @@ pub trait SessionExt: Session {
                     "IEEE 488.2 block: message ended before the header".into(),
                 ));
             }
-            let chunk = self.read(READ_CHUNK)?;
+            let chunk = self
+                .read(READ_CHUNK)
+                .map_err(|e| e.prepend_partial(std::mem::take(&mut buf)))?;
             buf.extend_from_slice(&chunk.data);
             last = chunk.reason;
         };
@@ -395,7 +402,10 @@ pub trait SessionExt: Session {
                             buf.len() - data_start
                         )));
                     }
-                    let chunk = self.read((end - buf.len()).min(READ_CHUNK))?;
+                    let want = (end - buf.len()).min(READ_CHUNK);
+                    let chunk = self
+                        .read(want)
+                        .map_err(|e| e.prepend_partial(std::mem::take(&mut buf)))?;
                     buf.extend_from_slice(&chunk.data);
                     last = chunk.reason;
                 }
@@ -404,7 +414,8 @@ pub trait SessionExt: Session {
                 let complete =
                     last == TermReason::End || (last == TermReason::TermChar && buf.len() > end);
                 if !complete {
-                    self.read_message()?;
+                    self.read_message()
+                        .map_err(|e| e.prepend_partial(std::mem::take(&mut buf)))?;
                 }
                 buf.truncate(end);
                 buf.drain(..data_start);
@@ -412,7 +423,9 @@ pub trait SessionExt: Session {
             }
             BlockHeader::Indefinite { data_start } => {
                 while last != TermReason::End {
-                    let chunk = self.read(READ_CHUNK)?;
+                    let chunk = self
+                        .read(READ_CHUNK)
+                        .map_err(|e| e.prepend_partial(std::mem::take(&mut buf)))?;
                     buf.extend_from_slice(&chunk.data);
                     last = chunk.reason;
                 }

@@ -252,15 +252,22 @@ impl Library {
         }
     }
 
-    pub(crate) fn read(&self, vi: ViSession, buf: &mut [u8]) -> Res<usize> {
-        let f = func!(self, viRead);
+    /// Returns the byte count with the result, since VISA reports bytes
+    /// received before an error such as `VI_ERROR_TMO` (DESIGN.md C12).
+    pub(crate) fn read(&self, vi: ViSession, buf: &mut [u8]) -> (usize, Result<ViStatus, Fail>) {
+        let Some(f) = self.table.viRead else {
+            let fail = Fail {
+                op: "viRead",
+                status: None,
+            };
+            return (0, Err(fail));
+        };
         let mut count = 0;
         // SAFETY: `buf` is valid for `clamp(buf.len())` bytes and `count` is
         // a valid out-pointer.
         let status = unsafe { f(vi, buf.as_mut_ptr(), clamp(buf.len()), &raw mut count) };
-        let status = check("viRead", status)?;
         // Never trust the count beyond the buffer.
-        Ok(((count as usize).min(buf.len()), status))
+        ((count as usize).min(buf.len()), check("viRead", status))
     }
 
     pub(crate) fn write(&self, vi: ViSession, data: &[u8]) -> Res<usize> {
