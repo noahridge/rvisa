@@ -535,7 +535,8 @@ impl Session for MockSession {
             {
                 n = pos + 1;
             }
-            let data: Vec<u8> = front.data.drain(..n).collect();
+            let data = front.data[..n].to_vec();
+            front.data.drain(..n);
             let reason = if front.data.is_empty() {
                 state.output.pop_front();
                 TermReason::End

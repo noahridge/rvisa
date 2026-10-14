@@ -22,12 +22,23 @@
 //!
 //! # Backends
 //!
-//! | Name | Crate | Available |
-//! |---|---|---|
-//! | `mock` | `rvisa-mock` | feature `mock` |
+//! In default priority order:
 //!
-//! The vendor VISA backend and the pure-Rust transports arrive in later
-//! releases (see `docs/ROADMAP.md`).
+//! | Name | Crate | Available | Supports |
+//! |---|---|---|---|
+//! | `mock` | `rvisa-mock` | feature `mock` | only its registered instruments |
+//! | `vendor` | `rvisa-vendor` | feature `vendor` (default) | every VISA resource; needs a VISA installed |
+//!
+//! Pure-Rust transports arrive in later releases (see `docs/ROADMAP.md`).
+//! Without a VISA installed, the vendor backend reports
+//! [`Error::BackendUnavailable`] with instructions, and the program keeps
+//! running.
+//!
+//! # Features
+//!
+//! - `vendor` (default): the runtime-loaded vendor VISA backend.
+//! - `mock`: the scripted mock backend with demo instruments.
+//! - `tokio`: [`tokio::AsyncInstrument`], an async adapter.
 
 #![deny(missing_docs)]
 
@@ -38,6 +49,11 @@ use std::time::Duration;
 pub use rvisa_core::*;
 #[cfg(feature = "mock")]
 pub use rvisa_mock as mock;
+#[cfg(feature = "vendor")]
+pub use rvisa_vendor as vendor;
+
+#[cfg(feature = "tokio")]
+pub mod tokio;
 
 /// The traits and types most programs need: `use rvisa::prelude::*;`.
 pub mod prelude {
@@ -50,10 +66,20 @@ pub mod prelude {
 pub const DEFAULT_WRITE_TERMINATION: &[u8] = b"\n";
 
 /// The backends compiled in, in default priority order.
-fn default_backends() -> Vec<Arc<dyn Backend>> {
+///
+/// The mock comes first: it supports only its own instruments, while the
+/// vendor backend supports every VISA resource (DESIGN.md V10).
+fn default_backends(
+    #[allow(unused)] vendor_library: Option<&std::path::Path>,
+) -> Vec<Arc<dyn Backend>> {
     vec![
         #[cfg(feature = "mock")]
         (Arc::new(rvisa_mock::MockBackend::demo()) as Arc<dyn Backend>),
+        #[cfg(feature = "vendor")]
+        (Arc::new(match vendor_library {
+            Some(path) => rvisa_vendor::VendorBackend::with_library_path(path),
+            None => rvisa_vendor::VendorBackend::new(),
+        }) as Arc<dyn Backend>),
     ]
 }
 
@@ -90,6 +116,7 @@ impl ResourceManager {
             defaults: true,
             extra: Vec::new(),
             prefer: None,
+            vendor_library: None,
         }
     }
 
@@ -134,7 +161,10 @@ impl ResourceManager {
         backend: Option<&str>,
         options: &OpenOptions,
     ) -> Result<Instrument> {
-        let rn: ResourceName = resource.parse()?;
+        let rn = match resource.parse::<ResourceName>() {
+            Ok(rn) => rn,
+            Err(parse_error) => self.resolve_alias(resource)?.ok_or(parse_error)?,
+        };
         let chosen = match backend {
             Some(name) => self.find(name)?,
             None => self
@@ -163,14 +193,43 @@ impl ResourceManager {
         Pattern::new(pattern)?;
         let mut seen = HashSet::new();
         let mut names = Vec::new();
+        let mut unavailable = None;
+        let mut answered = false;
         for backend in &self.backends {
-            for name in backend.list(pattern)? {
-                if seen.insert(name.clone()) {
-                    names.push(name);
+            match backend.list(pattern) {
+                Ok(found) => {
+                    answered = true;
+                    for name in found {
+                        if seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
                 }
+                // An unavailable backend (no VISA installed) does not hide
+                // the others' results (DESIGN.md V3).
+                Err(e @ Error::BackendUnavailable { .. }) => {
+                    unavailable.get_or_insert(e);
+                }
+                Err(e) => return Err(e),
             }
         }
-        Ok(names)
+        match unavailable {
+            Some(e) if !answered => Err(e),
+            _ => Ok(names),
+        }
+    }
+
+    /// Asks each backend, in priority order, to resolve a name that is not a
+    /// resource string (DESIGN.md V9).
+    fn resolve_alias(&self, alias: &str) -> Result<Option<ResourceName>> {
+        for backend in &self.backends {
+            match backend.resolve_alias(alias) {
+                Ok(Some(rn)) => return Ok(Some(rn)),
+                Ok(None) | Err(Error::BackendUnavailable { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
     }
 
     fn find(&self, name: &str) -> Result<&Arc<dyn Backend>> {
@@ -187,6 +246,7 @@ pub struct ResourceManagerBuilder {
     defaults: bool,
     extra: Vec<Arc<dyn Backend>>,
     prefer: Option<Vec<String>>,
+    vendor_library: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for ResourceManagerBuilder {
@@ -216,6 +276,14 @@ impl ResourceManagerBuilder {
         self
     }
 
+    /// Tries the VISA library at `path` before the default locations
+    /// (ROADMAP D2).
+    #[cfg(feature = "vendor")]
+    pub fn vendor_library(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.vendor_library = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     /// Leaves out the compiled-in backends.
     pub fn no_default_backends(mut self) -> Self {
         self.defaults = false;
@@ -238,7 +306,7 @@ impl ResourceManagerBuilder {
     pub fn build(self) -> Result<ResourceManager> {
         let mut backends: Vec<Arc<dyn Backend>> = Vec::new();
         let registered = if self.defaults {
-            default_backends()
+            default_backends(self.vendor_library.as_deref())
         } else {
             Vec::new()
         };

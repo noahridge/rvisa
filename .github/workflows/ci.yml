@@ -26,7 +26,31 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo test --workspace --all-features
       - run: cargo test --workspace
+      - run: cargo test --workspace --no-default-features
       - run: cargo doc --workspace --all-features --no-deps
+
+  # 32-bit Windows: VISA's functions are __stdcall there, so this runs the
+  # vendor backend's FFI against the fake library with that convention.
+  windows-32:
+    name: test (windows, i686, MSRV)
+    runs-on: windows-latest
+    env:
+      CARGO_BUILD_TARGET: i686-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install && rustup target add i686-pc-windows-msvc
+      - run: cargo test --workspace --all-features
+
+  miri:
+    name: miri (non-FFI crates)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+      MIRIFLAGS: -Zmiri-disable-isolation
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - run: cargo +nightly miri test -p rvisa-core -p rvisa-vendor -p rvisa-mock --lib
 
   stable:
     name: test (ubuntu, stable)

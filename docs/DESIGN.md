@@ -185,6 +185,8 @@ without END (raw sockets) the responses form one stream.
 USB, GPIB, ASRL), all running `demo_script()`: a generic SCPI device whose
 commands cover every conformance test. It includes a 1 MiB block containing
 every byte value, so term-char handling in binary data is exercised.
+In Phase 1 it gained `*CLS;*ESE 1;*SRE 32` and an `*OPC` that raises SRQ
+with STB 0x60, so the `srq_wait` example runs end to end against the mock.
 
 ## Conformance (`rvisa-conformance`)
 
@@ -242,6 +244,171 @@ law), `ieee488_block` and `search_pattern`. Seed inputs are committed under
 CI fails if `rvisa-core/src/resource.rs` has less than 95% line coverage
 (`cargo llvm-cov`), the Phase 0 exit criterion.
 
+### X3. Miri
+
+Miri runs the unit tests of `rvisa-core`, `rvisa-vendor` and `rvisa-mock`
+(ROADMAP Phase 1 exit criterion: the non-FFI parts). Tests that `dlopen` a
+library or open sockets are `cfg_attr(miri, ignore)`, since Miri cannot run
+them; the FFI itself is covered by the fake-library integration tests.
+
+## Vendor backend (`rvisa-vendor`), Phase 1
+
+### V1. `unsafe` is confined to one module, behind safe wrappers
+
+All FFI lives in `rvisa-vendor/src/ffi.rs`: the type aliases, the function
+table, library loading, and one *safe* wrapper method per VISA function.
+Each wrapper holds the single `unsafe` call with its `// SAFETY:` comment.
+The rest of the crate (session, attributes, status mapping, discovery) is
+ordinary safe code, compiled under `#![deny(unsafe_code)]`, with the one
+`#[allow(unsafe_code)]` on `mod ffi`. This meets D10's "one module per
+concern" with a single concern: crossing the FFI boundary.
+
+### V2. A fake VISA library for CI (deviation from D10)
+
+D10 allows `unsafe` only in `rvisa-vendor`. Testing the real FFI path
+without VISA needs a shared library that exports the VISA C functions, and
+that needs `unsafe extern` code. `crates/rvisa-vendor-fake` (a `cdylib`,
+`publish = false`) is that library: it translates each C call into a call
+on an `rvisa-mock` session, so the vendor backend runs the full conformance
+suite through real `dlopen` and real pointer marshalling. It is test-only,
+never shipped, and every `unsafe` block in it carries a `SAFETY` comment.
+
+### V3. Loading is lazy; `supports()` does not need the library
+
+`VendorBackend::new()` never fails. The library is loaded on first use
+(`open`, `list`, `resolve_alias`), and a load failure is cached and reported
+as `Error::BackendUnavailable`, listing every path tried and how to fix it
+(install a VISA, or set `RVISA_VENDOR_LIB`). `supports()` answers from the
+resource type alone (TCPIP, USB, GPIB and ASRL boards; not `AsrlPath`), so
+a missing VISA yields that helpful error at `open`, rather than
+`NoBackend`. This is how a binary built without VISA "starts, and returns
+`BackendUnavailable` cleanly".
+
+`ResourceManager::list` skips backends that are unavailable, as long as at
+least one backend answered. If all of them are unavailable, it returns the
+first `BackendUnavailable`.
+
+### V4. Library search order
+
+1. A path given to `VendorBackend::with_library_path` or the facade's
+   `vendor_library(...)` builder option.
+2. The `RVISA_VENDOR_LIB` environment variable.
+3. Platform defaults:
+   - Windows: `visa64.dll` (64-bit) or `visa32.dll` through the normal DLL
+     search path (NI-VISA and the IVI shared components install there). Then
+     the VXIplug&play framework directory from the registry
+     (`HKLM\SOFTWARE\VXIPNP_Alliance\VXIPNP\CurrentVersion`, value
+     `VXIPNPPATH64` or `VXIPNPPATH`), trying `<dir>\Win64\Bin\` and
+     `<dir>\WinNT\Bin\`. **Unverified:** the key and layout come from the
+     VXIplug&play framework specification and must be checked on a Windows
+     host with NI-VISA in Phase 1 task 7.
+   - Linux: `libvisa.so` through the dynamic loader, then
+     `libvisa.so` / `libvisa.so.*` in `/usr/local/lib`, `/usr/lib64`,
+     `/usr/lib`, and `/usr/lib/<arch>-linux-gnu`.
+   - macOS: `/Library/Frameworks/VISA.framework/VISA` (NI), then
+     `/Library/Frameworks/RsVisa.framework/RsVisa` (R&S).
+
+A library that does not export `viOpenDefaultRM` is rejected, and the next
+candidate is tried.
+
+### V5. Status mapping
+
+| VISA status | `Error` |
+|---|---|
+| `VI_ERROR_TMO` | `Timeout` (but `ResourceLocked` from `viLock`) |
+| `VI_ERROR_RSRC_NFOUND` | `NotFound(resource)` |
+| `VI_ERROR_RSRC_LOCKED` | `ResourceLocked` |
+| `VI_ERROR_NSUP_OPER`, `VI_ERROR_NIMPL_OPER`, `VI_ERROR_NSUP_ATTR`, `VI_ERROR_NSUP_ATTR_STATE`, `VI_ERROR_NSUP_MECH` | `Unsupported { op }` |
+| `VI_ERROR_ATTR_READONLY` | `AttrReadOnly(attr)` |
+| `VI_ERROR_NENABLED` | `EventNotEnabled(kind)` |
+| `VI_ERROR_SESN_NLOCKED` | `InvalidArgument` (unlock without a lock) |
+| `VI_ERROR_INV_RSRC_NAME` | `InvalidResource` |
+| anything else below zero | `Vendor { status, name, desc }`, with `name` from the static table and `desc` from `viStatusDesc` |
+
+Completion codes: `VI_SUCCESS_TERM_CHAR` gives `TermReason::TermChar`,
+`VI_SUCCESS_MAX_CNT` gives `MaxCount`, and any other success gives `End`
+(D11). Warnings on other calls are logged at `debug`.
+
+The status-code values were written from the VPP-4.3 specification. Like
+those in `legacy/`, they must be checked against a vendor `visa.h` (read,
+not committed; D3) in Phase 1 task 7.
+
+### V6. Attributes
+
+The common set maps to fixed `VI_ATTR_*` IDs and C types (`u8`, `u16`,
+`u32`, booleans as `ViUInt16`, strings as 256-byte buffers). `Attr::Raw(id)`
+reads strings when the ID has the `0xBFFF` prefix, and otherwise reads a
+number into a zeroed 8-byte buffer (no VISA attribute is wider), returned
+as `AttrValue::U64`. This relies on little-endian byte order, so on
+big-endian targets raw numeric reads return `Unsupported`. Raw writes take
+`U64`, `U32`, `U16`, `U8` or `Bool`.
+
+`viReadSTB` returns a `ViUInt16`; the status byte is its low 8 bits.
+
+### V7. Locks and open options
+
+`viOpen` is always called with `VI_NO_LOCK`. A lock in `OpenOptions` is
+taken afterwards with `viLock`, because `viOpen` cannot pass a shared-lock
+key (C5).
+
+### V8. Data received before a read timeout is discarded
+
+On `VI_ERROR_TMO`, `viRead` may report bytes it received. `Session::read`
+returns `Error::Timeout`, and those bytes are lost, matching the trait as
+specified in §5. Open question for review: should `Error::Timeout` carry
+the partial data?
+
+### V9. Alias resolution through backends
+
+`Backend` gains a provided method `resolve_alias(&self, &str) ->
+Result<Option<ResourceName>>`, defaulting to `Ok(None)`. The vendor backend
+implements it with `viParseRsrcEx`'s expanded name. When a string does not
+parse as a resource name, `ResourceManager::open` asks each backend in
+priority order. Adding a provided method does not break backends.
+
+### V10. Priority with both mock and vendor enabled
+
+The `mock` backend, if compiled in, comes *before* `vendor`. It supports only
+the resources registered with it, so it cannot capture real instruments,
+while vendor supports every VISA resource type and would otherwise capture
+the mock's demo resources.
+
+### V11. Async adapter (`tokio` feature)
+
+`rvisa::tokio::AsyncInstrument` wraps an `Instrument` in
+`Arc<Mutex<...>>`, and runs each call with `tokio::task::spawn_blocking`
+(D8). If a future is dropped, the blocking call still completes and
+releases the lock, so the instrument is never lost or left half-used.
+`AsyncResourceManager::open` also runs on the blocking pool, since opening
+can block (TCP connect, lock wait). A failed join (a panic inside the
+backend) is reported as `Error::Io`.
+
+### V12. Vendor-only operations
+
+`viFlush` and the trivial GPIB control call (`viGpibControlREN`) have no
+place on the transport-agnostic `Session` trait. They are inherent methods
+on `VendorSession`, reachable through `VendorBackend::open_vendor`.
+
+## Conformance additions (Phase 1)
+
+### K2. Transports without END
+
+Raw sockets have no END indicator, so a read without a term char only ends
+at a timeout. `Profile::term_char_always` makes every test enable the term
+char, as a socket user must. `Report::assert_conformant(names)` now accepts
+`Skipped` as well as `Unsupported` for the named tests, so a profile without
+an SRQ command can still be asserted on.
+
+## Mock additions (Phase 1)
+
+### M6. A mock instrument on a real TCP socket
+
+`rvisa_mock::TcpInstrument` serves a `Script` on a local TCP port, with raw
+socket semantics (newline-terminated commands, no END). With a real VISA
+installed, `TCPIP0::127.0.0.1::<port>::SOCKET` then exercises the vendor
+backend end to end without an instrument. It is also the Phase 2 socket
+backend's first test peer.
+
 ## Dependencies
 
 Every dependency passes `cargo-deny` (see `deny.toml`).
@@ -253,3 +420,6 @@ Every dependency passes `cargo-deny` (see `deny.toml`).
 | `serde`, `serde_json` | mock | The JSON Lines trace format (M2). |
 | `tracing` | mock | Transport-level logging (§9.6); byte I/O at `trace`. |
 | `libfuzzer-sys` | fuzz (not published) | cargo-fuzz targets (§7.4). |
+| `libloading` | vendor | Runtime loading of the vendor library (D1). Its licence is ISC (permissive, MIT-equivalent), added to `deny.toml`. |
+| `windows-registry` | vendor (Windows only) | Registry lookup of the VISA framework directory (D2, V4). Maintained by Microsoft as part of windows-rs; no `unsafe` needed on our side. |
+| `tokio` (optional, `rt`) | facade, feature `tokio` | `spawn_blocking` async adapter (D8, V11). |

@@ -16,3 +16,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `rvisa-conformance`: backend-agnostic conformance suite.
 - `rvisa`: `ResourceManager` with a backend registry and priority selection;
   mock backend behind the `mock` feature.
+- `rvisa-vendor`: the vendor VISA backend (NI, Keysight, R&S), loaded at
+  runtime. It covers message I/O, typed attributes plus `Attr::Raw`, locks,
+  the SRQ event queue, `viFindRsrc` discovery, alias resolution through
+  `viParseRsrcEx`, `viFlush` and GPIB REN control. Without VISA, operations
+  return `BackendUnavailable` with instructions.
+- `rvisa`: `vendor` feature (default), `vendor_library(...)` builder option,
+  alias fallback in `open`, and a `list` that skips unavailable backends.
+- `rvisa`: `tokio` feature with `AsyncResourceManager` and `AsyncInstrument`
+  (`spawn_blocking` adapter).
+- `rvisa-core`: `Backend::resolve_alias` (provided method).
+- `rvisa-conformance`: `Profile::term_char_always` for transports without END.
+- `rvisa-mock`: `TcpInstrument`, a scripted instrument on a local TCP socket.
+- Examples: `list_resources`, `idn`, `binary_block_capture`, `srq_wait`.

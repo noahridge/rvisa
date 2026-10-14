@@ -57,6 +57,10 @@ pub struct Profile {
     pub srq_command: Option<Vec<u8>>,
     /// The read termination character the instrument uses.
     pub term_char: u8,
+    /// Enable the term char in every test, for transports without an END
+    /// indicator (raw sockets), where a read otherwise ends only at a
+    /// timeout.
+    pub term_char_always: bool,
     /// The I/O timeout for the tests.
     pub io_timeout: Duration,
 }
@@ -75,8 +79,16 @@ impl Profile {
             large_block_command: None,
             srq_command: None,
             term_char: b'\n',
+            term_char_always: false,
             io_timeout: Duration::from_secs(5),
         }
+    }
+
+    /// Sets [`term_char_always`](Self::term_char_always).
+    #[must_use]
+    pub fn term_char_always(mut self, always: bool) -> Self {
+        self.term_char_always = always;
+        self
     }
 
     /// Requires the identification response to start with `prefix`.
@@ -199,12 +211,17 @@ fn needs<'p>(command: Option<&'p Vec<u8>>, what: &str) -> std::result::Result<&'
         .ok_or_else(|| Stop::Skipped(format!("the profile has no {what}")))
 }
 
-/// Puts a fresh session into a known state: the profile's timeout, no read
-/// termination, and (where supported) a device clear to discard stale
-/// output.
+/// The read termination a test uses when it does not need one itself.
+fn default_term(p: &Profile) -> Option<u8> {
+    p.term_char_always.then_some(p.term_char)
+}
+
+/// Puts a fresh session into a known state: the profile's timeout, the
+/// default read termination, and (where supported) a device clear to
+/// discard stale output.
 fn prepare(s: &mut dyn Session, p: &Profile) -> Check {
     s.set_timeout(Some(p.io_timeout))?;
-    s.set_read_termination(None)?;
+    s.set_read_termination(default_term(p))?;
     match s.clear() {
         Ok(()) | Err(Error::Unsupported { .. }) => Ok(()),
         Err(e) => Err(e.into()),
@@ -326,7 +343,7 @@ pub fn read_termination_char(s: &mut dyn Session, p: &Profile) -> Outcome {
         );
         let rest = s.read_message()?;
         ensure!(!rest.is_empty(), "nothing followed the first line");
-        s.set_read_termination(None)?;
+        s.set_read_termination(default_term(p))?;
         Ok(())
     })())
 }
@@ -370,7 +387,7 @@ pub fn large_transfer_1mb(s: &mut dyn Session, p: &Profile) -> Outcome {
         );
         let idn = s.query_bytes(&p.idn_command)?;
         ensure!(!idn.is_empty(), "no response after the block");
-        s.set_read_termination(None)?;
+        s.set_read_termination(default_term(p))?;
         Ok(())
     })())
 }
@@ -543,15 +560,15 @@ pub struct Report {
 }
 
 impl Report {
-    /// Tests that did not pass, excluding `Unsupported` outcomes for the
-    /// named tests.
+    /// Tests that did not pass, excluding `Unsupported` and `Skipped`
+    /// outcomes for the named tests.
     #[must_use]
-    pub fn problems(&self, allowed_unsupported: &[&str]) -> Vec<(&'static str, &Outcome)> {
+    pub fn problems(&self, allowed: &[&str]) -> Vec<(&'static str, &Outcome)> {
         self.results
             .iter()
             .filter(|(name, outcome)| match outcome {
                 Outcome::Passed => false,
-                Outcome::Unsupported { .. } => !allowed_unsupported.contains(name),
+                Outcome::Unsupported { .. } | Outcome::Skipped { .. } => !allowed.contains(name),
                 _ => true,
             })
             .map(|(name, outcome)| (*name, outcome))
@@ -568,14 +585,14 @@ impl Report {
     }
 
     /// Panics unless every test passed, except that the named tests may be
-    /// `Unsupported`.
+    /// `Unsupported` or `Skipped`.
     ///
     /// # Panics
     ///
     /// If any other test did not pass; the message lists the full report.
-    pub fn assert_conformant(&self, allowed_unsupported: &[&str]) {
+    pub fn assert_conformant(&self, allowed: &[&str]) {
         assert!(
-            self.problems(allowed_unsupported).is_empty(),
+            self.problems(allowed).is_empty(),
             "conformance failures:\n{self}"
         );
     }

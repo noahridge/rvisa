@@ -464,4 +464,15 @@ pub trait Backend: Send + Sync {
     /// [`Error::InvalidArgument`] for a malformed expression, or discovery
     /// errors.
     fn list(&self, pattern: &str) -> Result<Vec<ResourceName>>;
+
+    /// Resolves a name that is not a resource string, such as a VISA alias
+    /// configured in a vendor tool. The default knows no aliases.
+    ///
+    /// # Errors
+    ///
+    /// Backend errors, such as [`Error::BackendUnavailable`].
+    fn resolve_alias(&self, alias: &str) -> Result<Option<ResourceName>> {
+        let _ = alias;
+        Ok(None)
+    }
 }

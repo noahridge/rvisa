@@ -1,0 +1,26 @@
+[package]
+name = "rvisa-vendor"
+description = "Vendor VISA backend for rvisa (NI-VISA, Keysight VISA, R&S VISA), loaded at runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+keywords = ["visa", "instrument", "scpi", "test-measurement"]
+categories = ["hardware-support"]
+
+[dependencies]
+rvisa-core.workspace = true
+libloading = "0.9"
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.100"
+
+[dev-dependencies]
+rvisa-conformance.workspace = true
+rvisa-mock.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "rvisa-vendor-fake"
+description = "A fake VISA shared library over rvisa-mock, for testing rvisa-vendor without VISA (test-only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rvisa-core.workspace = true
+rvisa-mock.workspace = true
+rvisa-vendor.workspace = true
+
+[lints]
+workspace = true

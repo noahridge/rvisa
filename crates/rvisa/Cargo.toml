@@ -11,21 +11,45 @@ keywords = ["visa", "instrument", "scpi", "test-measurement"]
 categories = ["hardware-support"]
 
 [features]
+default = ["vendor"]
+## Registers the vendor VISA backend (NI, Keysight, R&S), loaded at runtime.
+vendor = ["dep:rvisa-vendor"]
 ## Registers the scripted mock backend, preloaded with demonstration instruments.
 mock = ["dep:rvisa-mock"]
+## An async adapter that runs blocking sessions on tokio's blocking pool.
+tokio = ["dep:tokio"]
 
 [dependencies]
 rvisa-core.workspace = true
 rvisa-mock = { workspace = true, optional = true }
+rvisa-vendor = { workspace = true, optional = true }
+tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 
 [dev-dependencies]
 rvisa-mock.workspace = true
 rvisa-conformance.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [[example]]
 name = "mock_idn"
 path = "../../examples/mock_idn.rs"
 required-features = ["mock"]
+
+[[example]]
+name = "list_resources"
+path = "../../examples/list_resources.rs"
+
+[[example]]
+name = "idn"
+path = "../../examples/idn.rs"
+
+[[example]]
+name = "binary_block_capture"
+path = "../../examples/binary_block_capture.rs"
+
+[[example]]
+name = "srq_wait"
+path = "../../examples/srq_wait.rs"
 
 [package.metadata.docs.rs]
 all-features = true

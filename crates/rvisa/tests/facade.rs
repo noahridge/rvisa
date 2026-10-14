@@ -204,18 +204,26 @@ fn forwards_every_session_method() {
     assert_eq!(block.len(), 8);
 }
 
-#[cfg(feature = "mock")]
 #[test]
-fn mock_feature_registers_the_demo_backend() {
+fn default_backends_follow_features() {
     let rm = ResourceManager::new().unwrap();
-    assert_eq!(rm.backend_names(), ["mock"]);
-    assert_eq!(rm.list("?*").unwrap().len(), 5);
+    let mut expected = Vec::new();
+    if cfg!(feature = "mock") {
+        expected.push("mock");
+    }
+    if cfg!(feature = "vendor") {
+        expected.push("vendor");
+    }
+    assert_eq!(rm.backend_names(), expected);
+    if expected.is_empty() {
+        assert!(matches!(rm.open("GPIB0::1"), Err(Error::NoBackend(_))));
+    }
 }
 
-#[cfg(not(feature = "mock"))]
+#[cfg(feature = "mock")]
 #[test]
-fn no_backends_without_features() {
+fn mock_comes_before_vendor() {
     let rm = ResourceManager::new().unwrap();
-    assert!(rm.backend_names().is_empty());
-    assert!(matches!(rm.open("GPIB0::1"), Err(Error::NoBackend(_))));
+    let i = rm.open("TCPIP0::mock.local::INSTR").unwrap();
+    assert_eq!(i.backend(), "mock");
 }

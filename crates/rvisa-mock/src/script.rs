@@ -147,7 +147,8 @@ pub const LARGE_BLOCK_LEN: usize = 1024 * 1024;
 /// |---|---|
 /// | `*IDN?\n` | `ACME Instruments,<model>,<serial>,1.0.0\n` |
 /// | `*OPC?\n` | `1\n` |
-/// | `*RST\n`, `*CLS\n` | none |
+/// | `*RST\n`, `*CLS\n`, `*CLS;*ESE 1;*SRE 32\n` | none |
+/// | `*OPC\n` | none; raises a service request (STB 0x60, as after `*SRE 32`) |
 /// | `MULTI?\n` | `line1\nline2\n` (one message) |
 /// | `DATA?\n` | `#18` + two little-endian `f32`s (1.0, -2.5) + `\n` |
 /// | `BLOCK:LARGE?\n` | a 1 MiB definite-length block + `\n` |
@@ -162,8 +163,10 @@ pub fn demo_script(model: &str, serial: &str) -> Script {
     data.push(b'\n');
 
     let mut large = rvisa_core::ieee488::encode_header(LARGE_BLOCK_LEN).into_bytes();
-    // Every byte value appears, including the newline term char.
-    large.extend((0..=255u8).cycle().take(LARGE_BLOCK_LEN));
+    // Every byte value appears, including the newline term char. Built by
+    // bulk copies, which matters under Miri.
+    let pattern: Vec<u8> = (0..=255u8).collect();
+    large.extend_from_slice(&pattern.repeat(LARGE_BLOCK_LEN / pattern.len()));
     large.push(b'\n');
 
     Script::new()
@@ -175,6 +178,11 @@ pub fn demo_script(model: &str, serial: &str) -> Script {
         .on_write("*RST\n")
         .no_response()
         .on_write("*CLS\n")
+        .no_response()
+        .on_write("*CLS;*ESE 1;*SRE 32\n")
+        .no_response()
+        .on_write("*OPC\n")
+        .srq(0x20)
         .no_response()
         .on_write("MULTI?\n")
         .respond(b"line1\nline2\n")

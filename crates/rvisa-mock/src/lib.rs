@@ -29,6 +29,7 @@ mod bytes;
 mod record;
 mod replay;
 mod script;
+mod tcp;
 pub mod trace;
 
 pub use backend::{MockBackend, MockInstrument, MockSession};
@@ -36,4 +37,5 @@ pub use bytes::{escape, unescape};
 pub use record::RecordingSession;
 pub use replay::ReplaySession;
 pub use script::{LARGE_BLOCK_LEN, RuleBuilder, Script, demo_script};
+pub use tcp::TcpInstrument;
 pub use trace::Trace;
