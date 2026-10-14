@@ -108,11 +108,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Fuzz for 60 seconds
         working-directory: fuzz
         run: |
           mkdir -p corpus/${{ matrix.target }}
           seeds=seeds/${{ matrix.target }}
           [ -d "$seeds" ] || seeds=
-          cargo +nightly fuzz run ${{ matrix.target }} corpus/${{ matrix.target }} $seeds -- -max_total_time=60
+          # The prebuilt cargo-fuzz is a musl binary and would default to
+          # building for musl, which needs a musl C++ compiler.
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} corpus/${{ matrix.target }} $seeds -- -max_total_time=60
