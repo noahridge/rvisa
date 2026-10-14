@@ -299,9 +299,13 @@ first `BackendUnavailable`.
      the VXIplug&play framework directory from the registry
      (`HKLM\SOFTWARE\VXIPNP_Alliance\VXIPNP\CurrentVersion`, value
      `VXIPNPPATH64` or `VXIPNPPATH`), trying `<dir>\Win64\Bin\` and
-     `<dir>\WinNT\Bin\`. **Unverified:** the key and layout come from the
-     VXIplug&play framework specification and must be checked on a Windows
-     host with NI-VISA in Phase 1 task 7.
+     `<dir>\WinNT\Bin\`. Checked on Windows 11 with NI-VISA 26.5
+     (2026-10-13): the key exists in both registry views, but has only
+     `VXIPNPPATH` (`C:\Program Files\IVI Foundation\VISA\` in the 64-bit
+     view), not `VXIPNPPATH64`. NI installs `visa64.dll` and `visa32.dll`
+     in `System32`, so the bare name loads; `Win64\Bin` holds only NI's
+     own DLLs. The registry candidates stay as a fallback for installs
+     that do not use `System32`.
    - Linux: `libvisa.so` through the dynamic loader, then
      `libvisa.so` / `libvisa.so.*` in `/usr/local/lib`, `/usr/lib64`,
      `/usr/lib`, and `/usr/lib/<arch>-linux-gnu`.
@@ -329,9 +333,12 @@ Completion codes: `VI_SUCCESS_TERM_CHAR` gives `TermReason::TermChar`,
 `VI_SUCCESS_MAX_CNT` gives `MaxCount`, and any other success gives `End`
 (D11). Warnings on other calls are logged at `debug`.
 
-The status-code values were written from the VPP-4.3 specification. Like
-those in `legacy/`, they must be checked against a vendor `visa.h` (read,
-not committed; D3) in Phase 1 task 7.
+The status-code values were written from the VPP-4.3 specification. On
+2026-10-13 every constant in `visa.rs` (statuses, attribute and event IDs,
+and the rest) and every function prototype in `ffi.rs` was checked against
+NI-VISA 26.5's `visa.h` and `visatype.h` on Windows (read, not committed;
+D3). All matched. `ViAttrState` is 64-bit on 64-bit targets there, as
+declared.
 
 ### V6. Attributes
 
@@ -388,6 +395,20 @@ backend) is reported as `Error::Io`.
 `viFlush` and the trivial GPIB control call (`viGpibControlREN`) have no
 place on the transport-agnostic `Session` trait. They are inherent methods
 on `VendorSession`, reachable through `VendorBackend::open_vendor`.
+
+### V13. Statuses NI-VISA uses for unsupported operations
+
+Observed with NI-VISA 26.5 on Windows against a `SOCKET` resource:
+
+- Event calls on an event the resource lacks (`ServiceRequest` on a socket)
+  fail with `VI_ERROR_INV_EVENT`, not `VI_ERROR_NSUP_*`. Every `EventKind`
+  maps to a valid VISA event type, so on an event call this status maps to
+  `Unsupported`.
+- `viAssertTrigger` fails with `VI_ERROR_INV_SETUP` (the resource cannot
+  trigger as configured). On that call only, it maps to `Unsupported`.
+  Elsewhere it stays `Vendor`.
+
+Per §9.8, NI-VISA's observed behaviour wins over a reading of the spec.
 
 ## Conformance additions (Phase 1)
 

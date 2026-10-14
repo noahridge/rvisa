@@ -42,8 +42,8 @@ fn platform_defaults() -> Vec<PathBuf> {
     list
 }
 
-/// The VXIplug&play framework directories recorded in the registry.
-/// Unverified layout; see DESIGN.md V4.
+/// The VXIplug&play framework directories recorded in the registry
+/// (DESIGN.md V4).
 #[cfg(windows)]
 fn registry_framework_dirs() -> Vec<PathBuf> {
     const KEY: &str = r"SOFTWARE\VXIPNP_Alliance\VXIPNP\CurrentVersion";
@@ -111,8 +111,13 @@ fn multiarch_dir() -> Option<&'static str> {
 /// Loads the first candidate that is a VISA library. On failure, returns a
 /// message listing every attempt and how to fix it.
 pub(crate) fn load(explicit: Option<&Path>) -> Result<Library, String> {
+    load_first(candidates(explicit, std::env::var_os(LIBRARY_ENV)))
+}
+
+/// Loads the first of `paths` that is a VISA library.
+fn load_first(paths: Vec<PathBuf>) -> Result<Library, String> {
     let mut attempts = Vec::new();
-    for path in candidates(explicit, std::env::var_os(LIBRARY_ENV)) {
+    for path in paths {
         match Library::load(&path) {
             Ok(lib) => {
                 tracing::debug!(path = %path.display(), missing = ?lib.missing(), "vendor: loaded VISA");
@@ -150,7 +155,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "calls dlopen")]
     fn failure_message_is_helpful() {
-        let err = load(Some(Path::new("/nonexistent/visa-library"))).unwrap_err();
+        // Only the bad path, not the platform defaults: on a host with VISA
+        // installed, those would load.
+        let err = load_first(vec![PathBuf::from("/nonexistent/visa-library")]).unwrap_err();
         assert!(err.contains("/nonexistent/visa-library"), "{err}");
         assert!(err.contains(LIBRARY_ENV), "{err}");
         assert!(err.contains("NI-VISA"), "{err}");

@@ -52,6 +52,19 @@ pub(crate) fn error(
             Some(attr) => Error::AttrReadOnly(attr),
             None => vendor(status, describe),
         },
+        // Every `EventKind` maps to a valid VISA event type, so on an event
+        // call this can only mean the resource lacks that event (NI-VISA on
+        // SOCKET resources and SRQ). Not on viAssertTrigger: an invalid
+        // setup there means the resource cannot trigger as configured
+        // (NI-VISA on SOCKET resources). DESIGN.md V13.
+        VI_ERROR_INV_EVENT if ctx.event.is_some() => Error::Unsupported {
+            backend: BACKEND,
+            op: fail.op,
+        },
+        VI_ERROR_INV_SETUP if fail.op == "viAssertTrigger" => Error::Unsupported {
+            backend: BACKEND,
+            op: fail.op,
+        },
         VI_ERROR_NENABLED => match ctx.event {
             Some(kind) => Error::EventNotEnabled(kind),
             None => vendor(status, describe),
@@ -286,6 +299,24 @@ mod tests {
             Error::EventNotEnabled(EventKind::ServiceRequest)
         ));
         assert!(matches!(
+            map(fail("viWaitOnEvent", VI_ERROR_INV_EVENT)),
+            Error::Unsupported {
+                op: "viWaitOnEvent",
+                ..
+            }
+        ));
+        assert!(matches!(
+            map(fail("viAssertTrigger", VI_ERROR_INV_SETUP)),
+            Error::Unsupported {
+                op: "viAssertTrigger",
+                ..
+            }
+        ));
+        assert!(matches!(
+            map(fail("viSetAttribute", VI_ERROR_INV_SETUP)),
+            Error::Vendor { .. }
+        ));
+        assert!(matches!(
             map(fail("viUnlock", VI_ERROR_SESN_NLOCKED)),
             Error::InvalidArgument(_)
         ));
@@ -308,6 +339,7 @@ mod tests {
             VI_ERROR_RSRC_NFOUND,
             VI_ERROR_ATTR_READONLY,
             VI_ERROR_NENABLED,
+            VI_ERROR_INV_EVENT,
         ] {
             assert!(matches!(
                 error(fail("x", status), &bare, none),
