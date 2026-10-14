@@ -117,4 +117,6 @@ jobs:
           mkdir -p corpus/${{ matrix.target }}
           seeds=seeds/${{ matrix.target }}
           [ -d "$seeds" ] || seeds=
-          cargo +nightly fuzz run ${{ matrix.target }} corpus/${{ matrix.target }} $seeds -- -max_total_time=60
+          # The prebuilt cargo-fuzz is a musl binary and would default to
+          # building for musl, which needs a musl C++ compiler.
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} corpus/${{ matrix.target }} $seeds -- -max_total_time=60
