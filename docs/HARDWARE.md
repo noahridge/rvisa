@@ -18,7 +18,7 @@ Legend: ☐ not run · ✅ pass · ❌ fail (link the issue) · n/a not applicab
 
 | Host OS | VISA implementation and version | Notes |
 |---|---|---|
-| _add_ | | |
+| Windows 11 Pro 10.0.26200, x86_64 | NI-VISA 26.5 (`visa64.dll` 8.0.7331, IVI shared components) | Loads `visa64.dll` from `System32`. Registry has `VXIPNPPATH` only. |
 
 ## Phase 1: vendor backend runs
 
@@ -67,6 +67,19 @@ RVISA_HW_ALLOW=stb_and_srq_event RVISA_HW_TRACE_DIR=traces/<instrument>/socket \
 RVISA_HW_VENDOR=USB0::<vid>::<pid>::<serial>::INSTR ... (same variables)
 ```
 
+In PowerShell, set the variables first, then run the same `cargo test`
+line:
+
+```text
+$env:RVISA_HW_VENDOR = "TCPIP0::<host>::INSTR"
+$env:RVISA_HW_SRQ_CMD = "*CLS;*ESE 1;*SRE 32;*OPC"
+$env:RVISA_HW_TRACE_DIR = "traces/<instrument>/tcpip"
+cargo test -p rvisa-vendor --test hardware -- --ignored --nocapture vendor_conformance
+```
+
+Variables persist for the rest of the shell session, so clear them
+(`Remove-Item Env:RVISA_HW_*`) before the next instrument.
+
 All variables are documented at the top of
 `crates/rvisa-vendor/tests/hardware.rs`. Commands are given without a
 terminator. Send back the report for each run, and commit the trace
@@ -80,6 +93,8 @@ outcome (with the conformance report).
 
 | Date | Host | Instrument | Backend | Command | Result |
 |---|---|---|---|---|---|
+| 2026-10-13 | Windows 11, NI-VISA 26.5 | none (constants check) | vendor | step 2 | ✅ All 165 constants in `visa.rs` and all 22 prototypes in `ffi.rs` match `visa.h`. |
+| 2026-10-13 | Windows 11, NI-VISA 26.5 | TCP simulator (`SIM100`) | vendor | step 1 | ✅ 9 passed; `stb_and_srq_event` skipped; `wait_event_requires_enable` and `assert_trigger` unsupported on SOCKET (DESIGN.md V13). The first run failed on those two until V13's mapping was added. |
 
 ## Throughput (1 MB binary transfer)
 

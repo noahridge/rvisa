@@ -1,8 +1,8 @@
 //! VISA C types and constants, hand-written from IVI VPP-4.3 (D3).
 //!
 //! Only what the vendor backend uses is declared. The values follow the
-//! specification and have not yet been checked against a vendor `visa.h`
-//! (see DESIGN.md V5).
+//! specification and were checked against NI-VISA 26.5's `visa.h` on
+//! Windows (see DESIGN.md V5).
 
 #![allow(missing_docs)] // The names are the VISA specification's.
 

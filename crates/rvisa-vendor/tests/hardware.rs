@@ -138,6 +138,7 @@ fn vendor_against_tcp_simulator() {
     // it; anything else must pass.
     report.assert_conformant(&[
         "stb_and_srq_event",
+        "wait_event_requires_enable",
         "device_clear_recovers_after_partial_read",
         "assert_trigger",
         "lock_and_unlock",
