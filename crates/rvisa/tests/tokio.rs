@@ -61,9 +61,17 @@ async fn a_cancelled_call_does_not_lose_the_instrument() {
     );
     // The blocking wait finishes, then the instrument is usable again.
     assert!(dmm.query("*IDN?").await.unwrap().starts_with("ACME"));
+}
 
-    let clone = dmm.clone();
-    assert!(dmm.into_inner().is_none(), "a clone still holds it");
+#[tokio::test]
+async fn into_inner_needs_the_last_handle() {
+    // A fresh instrument: a cancelled call may still hold a handle for a
+    // moment after it releases the lock, which would make this racy.
+    let rm = rm();
+    let psu = rm.open("GPIB0::22::INSTR").await.unwrap();
+    assert!(psu.query("*IDN?").await.unwrap().contains("PSU30"));
+    let clone = psu.clone();
+    assert!(psu.into_inner().is_none(), "a clone still holds it");
     assert!(clone.into_inner().is_some());
     let unknown = rm.open("GPIB0::29").await;
     assert!(matches!(unknown, Err(Error::NoBackend(_))), "{unknown:?}");

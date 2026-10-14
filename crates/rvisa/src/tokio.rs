@@ -104,6 +104,10 @@ impl AsyncInstrument {
     }
 
     /// The instrument, if no other clone or call holds it.
+    ///
+    /// A call whose future was dropped keeps running on the blocking pool,
+    /// and holds the instrument until it finishes. This can return `None`
+    /// for a moment after such a call has released the lock.
     #[must_use]
     pub fn into_inner(self) -> Option<Instrument> {
         Arc::into_inner(self.inner).map(|m| m.into_inner().unwrap_or_else(PoisonError::into_inner))
