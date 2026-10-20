@@ -382,8 +382,10 @@ mod ieee_block {
     }
 
     fn decode_f32_le(data: &[u8]) -> Vec<f32> {
-        data.chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        data.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect()
     }
 
