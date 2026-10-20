@@ -99,10 +99,19 @@ pub fn parse_block(message: &[u8]) -> Result<&[u8]> {
 }
 
 /// The definite-length header for `len` bytes of data, such as `#41000`.
-#[must_use]
-pub fn encode_header(len: usize) -> String {
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`] if `len` needs more than the nine digits a
+/// header can hold (1 GB or more).
+pub fn encode_header(len: usize) -> Result<String> {
     let digits = len.to_string();
-    format!("#{}{digits}", digits.len())
+    if digits.len() > 9 {
+        return Err(Error::InvalidArgument(format!(
+            "IEEE 488.2 block: {len} bytes is too long for a definite-length header"
+        )));
+    }
+    Ok(format!("#{}{digits}", digits.len()))
 }
 
 #[cfg(test)]
@@ -155,7 +164,7 @@ mod tests {
     #[test]
     fn header_encoding_round_trips() {
         for len in [0, 1, 9, 10, 1000, 1_048_576] {
-            let header = encode_header(len);
+            let header = encode_header(len).unwrap();
             assert_eq!(
                 parse_header(header.as_bytes()).unwrap(),
                 Some(BlockHeader::Definite {

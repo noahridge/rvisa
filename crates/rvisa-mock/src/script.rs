@@ -162,7 +162,10 @@ pub fn demo_script(model: &str, serial: &str) -> Script {
     data.extend_from_slice(&(-2.5f32).to_le_bytes());
     data.push(b'\n');
 
-    let mut large = rvisa_core::ieee488::encode_header(LARGE_BLOCK_LEN).into_bytes();
+    // LARGE_BLOCK_LEN fits in a header, so the fallback is never used.
+    let mut large = rvisa_core::ieee488::encode_header(LARGE_BLOCK_LEN)
+        .unwrap_or_default()
+        .into_bytes();
     // Every byte value appears, including the newline term char. Built by
     // bulk copies, which matters under Miri.
     let pattern: Vec<u8> = (0..=255u8).collect();

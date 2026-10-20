@@ -251,6 +251,37 @@ Miri runs the unit tests of `rvisa-core`, `rvisa-vendor` and `rvisa-mock`
 library or open sockets are `cfg_attr(miri, ignore)`, since Miri cannot run
 them; the FFI itself is covered by the fake-library integration tests.
 
+### X4. Cases ported from pyvisa's test suite
+
+`crates/rvisa-core/tests/pyvisa_compat.rs` ports the cases from pyvisa's
+`test_rname.py` and `test_util.py` that fall within this library's scope:
+resource names, search expressions and IEEE 488.2 block framing. Its header
+names the pyvisa commit they were taken from. pyvisa is MIT-licensed. The
+rest of pyvisa's suite either tests its Python API or needs its Keysight
+hardware setup. pyvisa-py's tests target its own transport classes, which
+makes them reference material for Phases 3–6, not tests to port.
+
+Where pyvisa and rvisa differ, the test asserts rvisa's behaviour:
+
+- **Canonical form.** pyvisa fills in defaults: `inst0` for a TCPIP
+  `INSTR` without a device name, and interface `0` for USB. It also keeps
+  USB IDs and ports as written. rvisa keeps absent parts absent and writes
+  the numbers normalised (C2).
+- **Bare `ASRL`.** pyvisa rejects it. rvisa reads it as `ASRL0::INSTR`,
+  because VPP-4.3 makes the board optional (C2).
+- **SOCKET ports.** pyvisa accepts `0`, `+5025` and ` 5025 ` because it
+  validates them with Python's `int()`. rvisa rejects all three.
+- **Attribute clauses in search expressions** (`?*{VI_ATTR_... == ...}`).
+  These are not supported by `Pattern` (C8). The vendor backend passes the
+  whole expression to `viFindRsrc`, but the pure-Rust backends will need
+  this before Phase 6's unified `list()`.
+- **HP and R&S block headers, and element decoding.** Not in scope.
+  `read_ieee488_block` returns raw bytes.
+
+Porting `test_block_length_too_large_for_header` found a bug.
+`ieee488::encode_header` wrote a corrupt header for blocks of 1 GB or more
+(`#10…`, which reads back as length 0). It now returns an error for these.
+
 ## Vendor backend (`rvisa-vendor`), Phase 1
 
 ### V1. `unsafe` is confined to one module, behind safe wrappers
