@@ -217,6 +217,9 @@ fn default_backends_follow_features() {
     if cfg!(feature = "socket") {
         expected.push("socket");
     }
+    if cfg!(feature = "vxi11") {
+        expected.push("vxi11");
+    }
     assert_eq!(rm.backend_names(), expected);
     if expected.is_empty() {
         assert!(matches!(rm.open("GPIB0::1"), Err(Error::NoBackend(_))));

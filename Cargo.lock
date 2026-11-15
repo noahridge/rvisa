@@ -98,6 +98,7 @@ dependencies = [
  "rvisa-mock",
  "rvisa-socket",
  "rvisa-vendor",
+ "rvisa-vxi11",
  "tokio",
 ]
 
@@ -160,6 +161,19 @@ dependencies = [
  "rvisa-core",
  "rvisa-mock",
  "rvisa-vendor",
+]
+
+[[package]]
+name = "rvisa-vxi11"
+version = "0.0.0"
+dependencies = [
+ "rvisa-conformance",
+ "rvisa-core",
+ "rvisa-mock",
+ "rvisa-vendor",
+ "rvisa-vxi11",
+ "socket2",
+ "tracing",
 ]
 
 [[package]]

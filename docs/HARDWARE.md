@@ -138,6 +138,31 @@ server that logged every byte (DESIGN.md S1–S6):
 | `viEnableEvent` for SRQ | `VI_ERROR_INV_EVENT` |
 | `viLock`, `viUnlock` | work; a second `viUnlock` gives `VI_ERROR_SESN_NLOCKED` |
 
+## Phase 3: VXI-11 backend runs
+
+The exit criteria: the VXI-11 backend passes conformance and matches the
+vendor golden traces on at least two instruments from different vendors.
+For each instrument, record the vendor traces first (Phase 1 step 3, with
+the `TCPIP0::<host>::INSTR` resource, into `traces/<instrument>/vendor`).
+Then, with the same `RVISA_HW_*_CMD` values:
+
+```text
+RVISA_HW_VXI11=TCPIP0::<host>::inst0::INSTR \
+RVISA_HW_BLOCK_CMD="<query returning a binary block>" \
+RVISA_HW_LARGE_CMD="<query returning >= 1 MiB block>" \
+RVISA_HW_SRQ_CMD="*CLS;*ESE 1;*SRE 32;*OPC" \
+RVISA_HW_GOLDEN_DIR=traces/<instrument>/vendor \
+  cargo test --release -p rvisa-vxi11 --test hardware -- --ignored --nocapture --test-threads=1
+```
+
+This runs `vxi11_conformance`, `vxi11_matches_golden_traces`,
+`throughput_1mb` and `discovery`. The SRQ test needs the instrument to
+connect back to this machine (the interrupt channel): allow inbound TCP
+for the test binary through the firewall, or leave `RVISA_HW_SRQ_CMD`
+unset to skip it. All variables are documented at the top of
+`crates/rvisa-vxi11/tests/hardware.rs`. Send back the output, and record
+the throughput numbers below.
+
 ## Run log
 
 One entry per run: date, host, instrument, backend, the command used, and the

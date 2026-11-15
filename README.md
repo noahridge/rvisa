@@ -9,10 +9,11 @@ resource strings, sessions, read/write/query, attributes and events.
   runtime so binaries run without VISA installed. Also the core API, a
   scripted mock backend, record/replay traces, a backend conformance suite,
   and an async adapter for tokio.
-- **In progress:** a pure-Rust raw socket backend
-  (`TCPIP::host::port::SOCKET`), with native async. It awaits hardware
+- **In progress:** pure-Rust backends for raw sockets
+  (`TCPIP::host::port::SOCKET`, with native async) and VXI-11
+  (`TCPIP::host[::inst0]::INSTR`, LXI instruments). Both await hardware
   validation.
-- **Next:** pure-Rust VXI-11, USBTMC, HiSLIP and serial.
+- **Next:** pure-Rust USBTMC, HiSLIP and serial.
 
 > Status: pre-release. Nothing is published yet. The crate names are
 > placeholders.

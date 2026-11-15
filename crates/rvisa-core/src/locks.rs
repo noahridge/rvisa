@@ -2,7 +2,11 @@
 //! locking of its own (DESIGN.md C13).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
+use crate::error::{Error, Result};
+use crate::resource::ResourceName;
 use crate::session::LockKind;
 
 /// The locks held on one resource, by session ID.
@@ -123,6 +127,87 @@ impl LockTable {
     /// Releases every lock `session` holds, as when it closes.
     pub fn release_all(&mut self, session: u64) {
         while self.unlock(session) {}
+    }
+}
+
+/// One [`LockTable`] per resource, for the sessions of one backend
+/// (DESIGN.md C13). Each session takes an ID from
+/// [`new_id`](Self::new_id) and passes it to the other methods.
+///
+/// ```
+/// use rvisa_core::{Error, LockKind, LockRegistry, ResourceName};
+///
+/// let rn: ResourceName = "TCPIP0::h::5025::SOCKET".parse()?;
+/// let locks = LockRegistry::new();
+/// let (a, b) = (locks.new_id(), locks.new_id());
+/// assert!(locks.try_lock(&rn, a, &LockKind::Exclusive));
+/// assert!(matches!(locks.check(&rn, b), Err(Error::ResourceLocked)));
+/// locks.release_all(&rn, a);
+/// locks.check(&rn, b)?;
+/// # Ok::<(), Error>(())
+/// ```
+#[derive(Debug, Default)]
+pub struct LockRegistry {
+    tables: Mutex<HashMap<ResourceName, LockTable>>,
+    next_id: AtomicU64,
+}
+
+impl LockRegistry {
+    /// No locks held.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A new session ID.
+    pub fn new_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn with<R>(&self, resource: &ResourceName, f: impl FnOnce(&mut LockTable) -> R) -> R {
+        let mut tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        let table = tables.entry(resource.clone()).or_default();
+        let result = f(table);
+        if *table == LockTable::new() {
+            tables.remove(resource);
+        }
+        result
+    }
+
+    /// Fails if another session's lock keeps `session` out of `resource`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ResourceLocked`].
+    pub fn check(&self, resource: &ResourceName, session: u64) -> Result<()> {
+        if self.with(resource, |t| t.blocks(session)) {
+            Err(Error::ResourceLocked)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// [`LockTable::try_lock`] on `resource`'s table.
+    pub fn try_lock(&self, resource: &ResourceName, session: u64, kind: &LockKind) -> bool {
+        self.with(resource, |t| t.try_lock(session, kind))
+    }
+
+    /// [`LockTable::unlock`] on `resource`'s table.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] if `session` holds no lock.
+    pub fn unlock(&self, resource: &ResourceName, session: u64) -> Result<()> {
+        if self.with(resource, |t| t.unlock(session)) {
+            Ok(())
+        } else {
+            Err(Error::InvalidArgument("the session holds no lock".into()))
+        }
+    }
+
+    /// [`LockTable::release_all`] on `resource`'s table.
+    pub fn release_all(&self, resource: &ResourceName, session: u64) {
+        self.with(resource, |t| t.release_all(session));
     }
 }
 

@@ -11,11 +11,15 @@ keywords = ["visa", "instrument", "scpi", "test-measurement"]
 categories = ["hardware-support"]
 
 [features]
-default = ["vendor", "socket"]
+default = ["vendor", "socket", "vxi11"]
 ## Registers the vendor VISA backend (NI, Keysight, R&S), loaded at runtime.
 vendor = ["dep:rvisa-vendor"]
 ## Registers the pure-Rust raw socket backend (TCPIP::host::port::SOCKET).
 socket = ["dep:rvisa-socket"]
+## Registers the pure-Rust VXI-11 backend (TCPIP::host[::inst0]::INSTR).
+vxi11 = ["dep:rvisa-vxi11"]
+## Service request events on the VXI-11 backend, through its interrupt channel.
+vxi11-srq = ["vxi11", "rvisa-vxi11?/srq"]
 ## Registers the scripted mock backend, preloaded with demonstration instruments.
 mock = ["dep:rvisa-mock"]
 ## An async adapter that runs blocking sessions on tokio's blocking pool.
@@ -26,10 +30,12 @@ rvisa-core.workspace = true
 rvisa-mock = { workspace = true, optional = true }
 rvisa-vendor = { workspace = true, optional = true }
 rvisa-socket = { workspace = true, optional = true }
+rvisa-vxi11 = { workspace = true, optional = true }
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 
 [dev-dependencies]
 rvisa-mock.workspace = true
+rvisa-vxi11 = { workspace = true, features = ["server"] }
 rvisa-conformance.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 

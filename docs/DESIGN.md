@@ -160,6 +160,10 @@ mock's lock bookkeeping moved to `rvisa_core::LockTable` so they share one
 tested implementation. These locks are not visible to other processes
 (NI-VISA's are, through its resource manager service).
 
+`rvisa_core::LockRegistry` (Phase 3) holds one `LockTable` per resource for
+a backend's sessions. It moved out of `rvisa-socket` when the VXI-11
+backend needed the same thing.
+
 ## Mock, record and replay (`rvisa-mock`)
 
 ### M1. Scripted instruments
@@ -564,6 +568,148 @@ tries the next supporting backend when one returns `BackendUnavailable`,
 and returns that first error only if no backend opens the resource. Any
 other error still stops the search (F1). `open_with` never falls back.
 
+## VXI-11 backend (`rvisa-vxi11`), Phase 3
+
+Written from the VXI-11 specification (rev. 1.0), RFC 5531 (ONC-RPC),
+RFC 4506 (XDR) and RFC 1833 (portmapper), and tested against the crate's
+own server (R9). It has not yet been run against an instrument or compared
+with NI-VISA's VXI-11 behaviour; R10 lists the runs that will.
+
+### R1. Scope and defaults
+
+Backend name `vxi11`. `supports()` is true for `TcpipInstr` whose device
+is missing (meaning `inst0`) or anything but `hislip*`, which is left to
+Phase 5. Device names such as `gpib0,5` pass through to `create_link`.
+Defaults as in NI-VISA: 2 s I/O timeout, term char `\n` disabled, END sent
+with the last byte of a write. The facade registers it, with feature
+`vxi11` (default), after `vendor` and `socket` (F3).
+
+### R2. RPC and XDR written in the crate
+
+VXI-11 needs four XDR primitives (32-bit integers, booleans, variable-length
+opaque data, strings), about a dozen fixed structures, and an RPC client
+with `AUTH_NONE` only. That is a few hundred lines in `xdr.rs`, `rpc.rs`
+and `proto.rs`. A general XDR or ONC-RPC crate would add dependencies and
+code generation (or serde) for this, and the decoder of device data needs
+to be small enough to fuzz completely (`fuzz/fuzz_targets/vxi11_xdr.rs`).
+**To review:** no specific XDR crate was compared before writing this.
+
+Records use RFC 5531 record marking; fragments are joined, and a record
+over 16 MiB plus headers is a protocol error rather than an allocation.
+Every decoder fails with `Error::Protocol` on short, oversized or trailing
+input. Received bytes are buffered per connection, so a call that times
+out mid-record leaves the stream in step, and a later call skips replies
+whose xid is not its own (R5).
+
+### R3. Opening
+
+`open` resolves the host, asks the portmapper on each address in turn
+(TCP, port 111 or `Vxi11Backend::portmapper_port`) for the core channel
+(program `0x0607AF`, version 1), connects, and calls `create_link` with
+`lockDevice` false and the process ID as client ID. `NotFound` covers a
+host that does not resolve, refuses the connection, has no core channel
+registered, or answers `create_link` with error 21 (invalid address) or 3
+(not accessible). `maxRecvSize` is clamped to 1 B–16 MiB.
+
+### R4. Reads and writes
+
+Writes are split into `device_write` calls of at most `maxRecvSize`, with
+the END flag on the last only if `SendEndEnabled`. A write that fails after
+some parts were accepted returns the count accepted, as the socket backend
+does; `write_all` continues it. An empty write sends nothing.
+
+Reads send `device_read` with the term-char flag when the term char is
+enabled, asking for at most 16 MiB per call. The reason bits map to
+`TermReason`: END first, then the term char, then the count. A reply with
+fewer bytes than asked and no END or term-char bit (some devices stop at a
+buffer size) is followed by another `device_read` for the rest, within the
+same overall timeout. Device error 15 (timeout) becomes `Error::Timeout`
+carrying the bytes received, including those of earlier calls in the same
+read (C12).
+
+### R5. Timeouts and the abort channel
+
+The session timeout goes to the device as `io_timeout` in milliseconds
+(infinite as `0xFFFFFFFF`). The client waits for the reply that long plus
+one second (`RPC_SLACK`). If no reply comes, the device is presumed stuck:
+the client sends `device_abort` on the abort channel (connected on first
+use, port from `create_link`) and returns `Timeout`. The late reply, if it
+comes, is skipped by xid. `Vxi11Session::abort_handle` exposes the same
+abort to other threads.
+
+I/O calls send `lock_timeout` 0 without the wait-lock flag, so a device
+locked by another client fails at once with `ResourceLocked` (error 11)
+instead of waiting.
+
+### R6. Locks
+
+Locks are kept in process with `LockRegistry` (C13), as for sockets, so
+exclusive and shared locks, nesting and `ResourceLocked` for other sessions
+behave the same. In addition, the first level of an exclusive lock takes
+the device lock (`device_lock`, waiting the rest of the lock timeout), and
+releasing the last level releases it, so other clients and processes are
+kept out too. VXI-11 has no shared locks; shared locks stay in process.
+`destroy_link` on close releases the device lock.
+
+### R7. Service requests (`srq` feature)
+
+The interrupt channel is a connection from the device to the client, so
+the client runs an RPC server. With the `srq` feature, the first
+`enable_event(ServiceRequest)` makes the session listen on the local
+address of its core connection, call `create_intr_chan` with that address,
+and `device_enable_srq` with a handle (the link ID). Each
+`device_intr_srq` carrying the handle queues an event; others are ignored.
+Replies are sent although devices treat the call as one-way. The channel
+lasts until the session closes (`destroy_intr_chan`).
+
+`Device_RemoteFunc` carries an IPv4 address, so SRQ over IPv6 is
+`Unsupported`. The instrument must be able to reach the client: a firewall
+blocking inbound TCP stops SRQ but nothing else.
+
+It is a feature because it starts a thread and opens a listening port per
+session that uses it. Without it, the event methods return `Unsupported`.
+The facade's `vxi11-srq` feature turns it on.
+
+### R8. Discovery
+
+`Vxi11Backend::discover(wait)` broadcasts a portmapper `GETPORT` for the
+core channel over UDP (to `255.255.255.255`, or the addresses given with
+`discovery_targets`) and collects the hosts that answer with a port, as
+`TCPIP0::<ip>::inst0::INSTR`. `list()` only does this when
+`discovery(Some(wait))` is set: it costs the full wait, and
+`ResourceManager::list` asks every backend.
+
+### R9. The test server (`server` feature)
+
+`Vxi11Server` serves any `Session` as a VXI-11 instrument on `127.0.0.1`,
+one session per link from a function given the device name. One port
+answers the portmapper (TCP and UDP) and the core channel; the abort
+channel has its own. Write parts are joined until END and passed on as one
+write, because mock scripts match whole messages. Session errors map to
+VXI-11 codes (locked 11, timeout 15 with partial data, unsupported 8, not
+found 21, others 17). Service requests the session raises are sent on the
+interrupt channel.
+
+With a mock instrument behind it, the full conformance suite passes in CI,
+SRQ included. Tests also use it with scripted sessions for cases a mock
+cannot produce: partial data before a timeout, replies without a reason
+bit, and a device that ignores its timeout.
+
+### R10. Exit tests
+
+`crates/rvisa-vxi11/tests/hardware.rs` holds the Phase 3 exit tests:
+conformance and golden-trace comparison per instrument, plus a throughput
+comparison with the vendor backend and a discovery run. They are
+`#[ignore]` and env-gated. Unlike Phase 2, there is no simulator
+comparison with NI-VISA: the test server's portmapper is not on port 111,
+and we know of no NI-VISA setting to use another port.
+
+### R11. No native async session yet
+
+S7 deferred an async `Session` trait until VXI-11 showed what it needs.
+This phase adds only the blocking session; the facade's `spawn_blocking`
+adapter (V11) covers async use.
+
 ## Dependencies
 
 Every dependency passes `cargo-deny` (see `deny.toml`).
@@ -578,5 +724,5 @@ Every dependency passes `cargo-deny` (see `deny.toml`).
 | `libloading` | vendor | Runtime loading of the vendor library (D1). Its licence is ISC (permissive, MIT-equivalent), added to `deny.toml`. |
 | `windows-registry` | vendor (Windows only) | Registry lookup of the VISA framework directory (D2, V4). Maintained by Microsoft as part of windows-rs; no `unsafe` needed on our side. |
 | `tokio` (optional, `rt`) | facade, feature `tokio` | `spawn_blocking` async adapter (D8, V11). |
-| `socket2` | socket | TCP keepalive (`SO_KEEPALIVE`), which `std::net` cannot set. Maintained by the rust-lang organisation; MIT OR Apache-2.0. |
+| `socket2` | socket, vxi11 | TCP keepalive (`SO_KEEPALIVE`), which `std::net` cannot set. Maintained by the rust-lang organisation; MIT OR Apache-2.0. |
 | `tokio` (optional, `net`, `time`, `io-util`) | socket, feature `tokio` | Native async socket session (S7). |
