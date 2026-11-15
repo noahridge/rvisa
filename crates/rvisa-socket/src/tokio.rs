@@ -26,7 +26,8 @@ use std::time::Duration;
 
 use rvisa_core::ieee488::{self, BlockHeader};
 use rvisa_core::{
-    Attr, AttrValue, Error, LockKind, READ_CHUNK, ReadResult, ResourceName, Result, TermReason,
+    Attr, AttrValue, Error, LockKind, LockRegistry, READ_CHUNK, ReadResult, ResourceName, Result,
+    TermReason,
 };
 use socket2::SockRef;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -34,7 +35,7 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 use crate::SocketBackend;
-use crate::backend::{LOCK_POLL, LockRegistry};
+use crate::backend::LOCK_POLL;
 use crate::buffer::ReadBuffer;
 use crate::settings::{STB_REPLY_MAX, Settings, parse_stb, unsupported};
 

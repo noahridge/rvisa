@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 rvisa-core = { path = "../crates/rvisa-core" }
+rvisa-vxi11 = { path = "../crates/rvisa-vxi11" }
 
 # Not part of the main workspace: fuzzing needs a nightly toolchain.
 [workspace]
@@ -32,6 +33,13 @@ bench = false
 [[bin]]
 name = "search_pattern"
 path = "fuzz_targets/search_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vxi11_xdr"
+path = "fuzz_targets/vxi11_xdr.rs"
 test = false
 doc = false
 bench = false

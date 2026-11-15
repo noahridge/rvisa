@@ -29,18 +29,21 @@
 //! | `mock` | `rvisa-mock` | feature `mock` | only its registered instruments |
 //! | `vendor` | `rvisa-vendor` | feature `vendor` (default) | every VISA resource; needs a VISA installed |
 //! | `socket` | `rvisa-socket` | feature `socket` (default) | `TCPIP::host::port::SOCKET`, in pure Rust |
+//! | `vxi11` | `rvisa-vxi11` | feature `vxi11` (default) | `TCPIP::host[::inst0]::INSTR` (VXI-11), in pure Rust |
 //!
 //! Vendor VISA comes before the pure-Rust backends until they have passed
 //! conformance on hardware (ROADMAP §5); [`ResourceManagerBuilder::prefer`]
 //! changes the order. Without a VISA installed, the vendor backend reports
 //! [`Error::BackendUnavailable`] with instructions, and [`open`](ResourceManager::open)
 //! moves on to the next backend that supports the resource, so socket
-//! resources still open.
+//! and VXI-11 resources still open.
 //!
 //! # Features
 //!
 //! - `vendor` (default): the runtime-loaded vendor VISA backend.
 //! - `socket` (default): the pure-Rust raw socket backend.
+//! - `vxi11` (default): the pure-Rust VXI-11 backend.
+//! - `vxi11-srq`: service request events on the VXI-11 backend.
 //! - `mock`: the scripted mock backend with demo instruments.
 //! - `tokio`: [`tokio::AsyncInstrument`], an async adapter, and the socket
 //!   backend's native async session (`socket::tokio`).
@@ -58,6 +61,8 @@ pub use rvisa_mock as mock;
 pub use rvisa_socket as socket;
 #[cfg(feature = "vendor")]
 pub use rvisa_vendor as vendor;
+#[cfg(feature = "vxi11")]
+pub use rvisa_vxi11 as vxi11;
 
 #[cfg(feature = "tokio")]
 pub mod tokio;
@@ -90,6 +95,8 @@ fn default_backends(
         }) as Arc<dyn Backend>),
         #[cfg(feature = "socket")]
         (Arc::new(rvisa_socket::SocketBackend::new()) as Arc<dyn Backend>),
+        #[cfg(feature = "vxi11")]
+        (Arc::new(rvisa_vxi11::Vxi11Backend::new()) as Arc<dyn Backend>),
     ]
 }
 

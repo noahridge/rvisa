@@ -37,6 +37,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `rvisa-core`: `LockTable`, VISA lock bookkeeping for backends without
   protocol locks; `Error::timeout`, `Error::read_timeout`,
   `Error::is_timeout` and `Error::prepend_partial`.
+- `rvisa-vxi11`: pure-Rust VXI-11 backend for `TCPIP::host[::device]::INSTR`,
+  with its own ONC-RPC and XDR code: portmapper lookup, links, chunked
+  writes with END, reads by reason bits, device clear, status byte,
+  trigger, exclusive device locks, `device_abort` on stuck calls
+  (`AbortHandle`), portmapper broadcast discovery, and SRQ through the
+  interrupt channel (feature `srq`). `Vxi11Server` (feature `server`)
+  serves any session as a VXI-11 instrument for tests.
+- `rvisa`: `vxi11` feature (default), registered after `socket`, and
+  `vxi11-srq`.
+- `rvisa-core`: `LockRegistry`, per-resource `LockTable`s for a backend,
+  moved from `rvisa-socket`.
+- Fuzz target `vxi11_xdr` for the VXI-11 decoders.
 
 ### Changed
 

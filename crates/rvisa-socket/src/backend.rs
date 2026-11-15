@@ -1,15 +1,13 @@
 //! The socket backend: options, connecting, and the in-process lock
 //! registry its sessions share (DESIGN.md S1, S6).
 
-use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rvisa_core::{
-    Backend, Error, LockKind, LockTable, OpenOptions, Pattern, ResourceName, Result, Session,
+    Backend, Error, LockRegistry, OpenOptions, Pattern, ResourceName, Result, Session,
 };
 
 use crate::BACKEND;
@@ -165,56 +163,6 @@ impl Backend for SocketBackend {
     fn list(&self, pattern: &str) -> Result<Vec<ResourceName>> {
         Pattern::new(pattern)?;
         Ok(Vec::new())
-    }
-}
-
-/// Lock tables per resource, shared by one backend's sessions
-/// (DESIGN.md C13, S6).
-#[derive(Debug, Default)]
-pub(crate) struct LockRegistry {
-    tables: Mutex<HashMap<ResourceName, LockTable>>,
-    next_id: AtomicU64,
-}
-
-impl LockRegistry {
-    /// A new session ID.
-    pub fn new_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    fn with<R>(&self, resource: &ResourceName, f: impl FnOnce(&mut LockTable) -> R) -> R {
-        let mut tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        let table = tables.entry(resource.clone()).or_default();
-        let result = f(table);
-        if *table == LockTable::new() {
-            tables.remove(resource);
-        }
-        result
-    }
-
-    /// `Err(ResourceLocked)` if another session's lock keeps `id` out.
-    pub fn check(&self, resource: &ResourceName, id: u64) -> Result<()> {
-        if self.with(resource, |t| t.blocks(id)) {
-            Err(Error::ResourceLocked)
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn try_lock(&self, resource: &ResourceName, id: u64, kind: &LockKind) -> bool {
-        self.with(resource, |t| t.try_lock(id, kind))
-    }
-
-    pub fn unlock(&self, resource: &ResourceName, id: u64) -> Result<()> {
-        if self.with(resource, |t| t.unlock(id)) {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument("the session holds no lock".into()))
-        }
-    }
-
-    pub fn release_all(&self, resource: &ResourceName, id: u64) {
-        self.with(resource, |t| t.release_all(id));
     }
 }
 

@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rvisa_core::{
-    Attr, AttrValue, Error, Event, EventKind, LockKind, ReadResult, ResourceName, Result, Session,
-    TermReason,
+    Attr, AttrValue, Error, Event, EventKind, LockKind, LockRegistry, ReadResult, ResourceName,
+    Result, Session, TermReason,
 };
 use socket2::SockRef;
 
-use crate::backend::{LOCK_POLL, LockRegistry};
+use crate::backend::LOCK_POLL;
 use crate::buffer::ReadBuffer;
 use crate::settings::{Options, STB_REPLY_MAX, Settings, parse_stb, socket_timeout, unsupported};
 

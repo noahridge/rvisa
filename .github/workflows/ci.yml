@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal --component miri
-      - run: cargo +nightly miri test -p rvisa-core -p rvisa-vendor -p rvisa-mock -p rvisa-socket --lib
+      - run: cargo +nightly miri test -p rvisa-core -p rvisa-vendor -p rvisa-mock -p rvisa-socket -p rvisa-vxi11 --lib
 
   stable:
     name: test (ubuntu, stable)
@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [resource_name, ieee488_block, search_pattern]
+        target: [resource_name, ieee488_block, search_pattern, vxi11_xdr]
     env:
       RUSTFLAGS: ""
     steps:
